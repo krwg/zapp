@@ -188,6 +188,23 @@ export function SettingsPage() {
         </SettingsGroup>
 
         <SettingsGroup id="about" title="About" description="О приложении.">
+          <div className={settingsStyles.row}>
+            <div className={settingsStyles.rowCopy} style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+              <img
+                src="/brand/shield-128.png"
+                alt="zapp"
+                width={48}
+                height={48}
+                style={{ borderRadius: 12 }}
+              />
+              <div>
+                <div className={settingsStyles.rowTitle}>{about.name}</div>
+                <div className={settingsStyles.rowHint}>
+                  Soft-minimal client · {about.license}
+                </div>
+              </div>
+            </div>
+          </div>
           <SettingsRow title="Application" hint={`${about.name} · ${about.license}`}>
             <span style={{ fontSize: 13, fontWeight: 500 }}>v{about.version}</span>
           </SettingsRow>

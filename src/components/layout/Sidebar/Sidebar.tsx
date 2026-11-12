@@ -11,9 +11,9 @@ import {
   LayoutDashboard,
   RefreshCw,
   Settings,
-  Shield,
 } from 'lucide-react'
 import type { EngineStatus } from '@/types'
+import shieldMark from '@/assets/brand/shield-64.png'
 import styles from './Sidebar.module.css'
 
 const NAV = [
@@ -56,7 +56,7 @@ export function Sidebar({ appVersion, engineStatus }: SidebarProps) {
     <aside className={styles.sidebar}>
       <div className={styles.brand}>
         <div className={styles.logo} aria-hidden>
-          <Shield size={18} strokeWidth={2.25} />
+          <img src={shieldMark} alt="" className={styles.logoImg} width={36} height={36} />
         </div>
         <div className={styles.brandText}>
           <div className={styles.name}>zapp</div>
