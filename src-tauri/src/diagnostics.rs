@@ -8,13 +8,15 @@ use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::engine::{probe_matrix_host, score_probes};
+use crate::engine::{
+    probe_matrix_host, rank_score, score_probes, strategy_prior_bonus,
+};
 use crate::model::*;
 use crate::state::AppState;
 use crate::util::{new_id, now_iso};
 
-fn diag_targets() -> Vec<(&'static str, u16)> {
-    vec![("youtube.com", 443), ("discord.com", 443)]
+fn diag_targets() -> Vec<&'static str> {
+    vec!["youtube.com", "discord.com"]
 }
 
 pub fn run_diagnostics_worker(app: AppHandle, cancel: Arc<Mutex<bool>>) {
@@ -22,7 +24,6 @@ pub fn run_diagnostics_worker(app: AppHandle, cancel: Arc<Mutex<bool>>) {
         return;
     };
 
-    // One UAC for helper, then all profile cycles are cheap IPC.
     if let Err(e) = crate::helper::ensure_helper(state.engine.app_data()) {
         let mut store = state.inner.lock().expect("state lock");
         store.diagnostics.phase = DiagnosticPhase::Failed;
@@ -39,24 +40,15 @@ pub fn run_diagnostics_worker(app: AppHandle, cancel: Arc<Mutex<bool>>) {
         store
             .profiles
             .iter()
-            // Prefer stable generals first; EXP last to reduce early load.
             .map(|p| (p.id.clone(), p.name.clone(), p.strategy_type.clone()))
             .collect()
     };
 
     let mut profiles = profiles;
     profiles.sort_by(|a, b| {
-        let score = |n: &str| {
-            let l = n.to_ascii_lowercase();
-            if l.contains("fake tls auto") {
-                0
-            } else if l.contains("exp") {
-                2
-            } else {
-                1
-            }
-        };
-        score(&a.1).cmp(&score(&b.1)).then(a.1.cmp(&b.1))
+        strategy_prior_bonus(&b.1)
+            .cmp(&strategy_prior_bonus(&a.1))
+            .then(a.1.cmp(&b.1))
     });
 
     let total = profiles.len() as u32;
@@ -75,10 +67,12 @@ pub fn run_diagnostics_worker(app: AppHandle, cancel: Arc<Mutex<bool>>) {
         store.diagnostics.progress = 2;
     }
     let _ = app.emit("diagnostics:progress", ());
-    state.history.push("diagnostics", "Started profile diagnostics via helper");
+    state
+        .history
+        .push("diagnostics", "Started adaptive profile diagnostics");
 
     let _ = state.engine.set_running(false);
-    thread::sleep(Duration::from_millis(200));
+    thread::sleep(Duration::from_millis(120));
 
     {
         let mut store = state.inner.lock().expect("state lock");
@@ -89,16 +83,28 @@ pub fn run_diagnostics_worker(app: AppHandle, cancel: Arc<Mutex<bool>>) {
 
     let timeout = {
         let store = state.inner.lock().expect("state lock");
-        Duration::from_millis(store.settings.network_timeout_ms.max(1500) as u64)
+        Duration::from_millis(store.settings.network_timeout_ms.max(1200) as u64)
     };
 
     let mut best: Option<(String, u32)> = None;
+    let mut tested = 0u32;
 
     for (index, (profile_id, name, strategy_type)) in profiles.into_iter().enumerate() {
         if *cancel.lock().expect("flag") {
             finalize_cancelled(&app, &state);
             restore_previous(&state, was_running, previous.as_deref());
             return;
+        }
+
+        // Early stop: excellent stable winner found — skip remaining EXP-heavy tail.
+        if let Some((_, best_score)) = &best {
+            let remaining_exp_only = name.to_ascii_lowercase().contains("exp");
+            if *best_score >= 90 && tested >= 2 && remaining_exp_only {
+                break;
+            }
+            if *best_score >= 95 && tested >= 3 {
+                break;
+            }
         }
 
         {
@@ -109,35 +115,45 @@ pub fn run_diagnostics_worker(app: AppHandle, cancel: Arc<Mutex<bool>>) {
         }
         let _ = app.emit("diagnostics:progress", ());
 
-        // Helper already elevated — start_no_elevate talks to it without new UAC.
         let start_res = state.engine.start_no_elevate(Some(&name));
-        // Give WinDivert a moment before probing.
-        thread::sleep(Duration::from_millis(450));
+        thread::sleep(Duration::from_millis(280));
 
         let mut probes = Vec::new();
         if start_res.is_ok() {
-            let budget = timeout.min(Duration::from_millis(1800));
-            for (host, _) in diag_targets() {
-                // Prefer HTTPS as the adaptive signal; TCP as fallback score.
+            let budget = timeout.min(Duration::from_millis(1400));
+            for host in diag_targets() {
                 probes.extend(probe_matrix_host(host, budget));
             }
         }
 
         let _ = state.engine.stop();
-        thread::sleep(Duration::from_millis(150));
+        thread::sleep(Duration::from_millis(80));
 
-        let score = if start_res.is_ok() {
+        let raw = if start_res.is_ok() {
             score_probes(&probes)
         } else {
             0
         };
-        let success = score >= 50;
+        let score = rank_score(raw, &name);
+        let success = score >= 55;
         let latency_ms = probes.iter().filter_map(|p| p.latency_ms).min();
         let notes = if let Err(e) = start_res {
             format!("Start failed: {e}")
         } else if success {
             let ok = probes.iter().filter(|p| p.ok).count();
-            format!("{ok}/{} targets reachable", probes.len())
+            let avg = probes
+                .iter()
+                .filter_map(|p| p.latency_ms)
+                .sum::<u32>()
+                .checked_div(
+                    probes
+                        .iter()
+                        .filter(|p| p.latency_ms.is_some())
+                        .count()
+                        .max(1) as u32,
+                )
+                .unwrap_or(0);
+            format!("{ok}/{} ok · avg {avg} ms · rank {score}", probes.len())
         } else {
             probes
                 .iter()
@@ -157,13 +173,14 @@ pub fn run_diagnostics_worker(app: AppHandle, cancel: Arc<Mutex<bool>>) {
             tested_at: now_iso(),
         };
 
+        tested += 1;
         {
             let mut store = state.inner.lock().expect("state lock");
             if let Some(p) = store.profiles.iter_mut().find(|p| p.id == profile_id) {
                 p.last_checked_at = Some(now_iso());
             }
             store.diagnostics.results.push(row);
-            store.diagnostics.tested_count = (index as u32) + 1;
+            store.diagnostics.tested_count = tested;
             store.diagnostics.working_count = store
                 .diagnostics
                 .results
@@ -171,7 +188,7 @@ pub fn run_diagnostics_worker(app: AppHandle, cancel: Arc<Mutex<bool>>) {
                 .filter(|r| r.success)
                 .count() as u32;
             store.diagnostics.progress =
-                ((((index as u32) + 1) * 90) / total.max(1)).saturating_add(5);
+                ((tested * 90) / total.max(1)).saturating_add(5);
         }
         let _ = app.emit("diagnostics:progress", ());
 
@@ -194,19 +211,20 @@ pub fn run_diagnostics_worker(app: AppHandle, cancel: Arc<Mutex<bool>>) {
         store.diagnostics.phase = DiagnosticPhase::Analyzing;
         store.diagnostics.current_strategy = Some("Selecting best strategy…".into());
         store.diagnostics.progress = 96;
-        // Best first.
-        store.diagnostics.results.sort_by(|a, b| b.score.cmp(&a.score));
+        store
+            .diagnostics
+            .results
+            .sort_by(|a, b| b.score.cmp(&a.score).then(a.latency_ms.cmp(&b.latency_ms)));
     }
     let _ = app.emit("diagnostics:progress", ());
-    thread::sleep(Duration::from_millis(250));
+    thread::sleep(Duration::from_millis(120));
 
     if let Some((best_name, score)) = best {
         apply_best(&state, &best_name);
         state.history.push(
             "diagnostics",
-            format!("Selected best strategy '{best_name}' (score {score})"),
+            format!("Selected '{best_name}' (adaptive score {score})"),
         );
-        // Auto-enable the winning strategy — one-click UX.
         let _ = state.engine.start_no_elevate(Some(&best_name));
     } else {
         state.history.push(

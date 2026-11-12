@@ -14,6 +14,7 @@ pub struct ProbeResult {
     pub note: String,
     #[allow(dead_code)]
     pub protocol: &'static str,
+    pub weight: u32,
 }
 
 impl ProbeResult {
@@ -38,6 +39,7 @@ pub fn probe_tcp(host: &str, port: u16, timeout: Duration) -> ProbeResult {
                 latency_ms: None,
                 note: format!("DNS failed: {e}"),
                 protocol: "tcp",
+                weight: 1,
             };
         }
     };
@@ -48,6 +50,7 @@ pub fn probe_tcp(host: &str, port: u16, timeout: Duration) -> ProbeResult {
             latency_ms: None,
             note: "DNS returned no addresses".into(),
             protocol: "tcp",
+            weight: 1,
         };
     }
 
@@ -60,6 +63,7 @@ pub fn probe_tcp(host: &str, port: u16, timeout: Duration) -> ProbeResult {
                     latency_ms: Some(ms),
                     note: "TCP OK".into(),
                     protocol: "tcp",
+                    weight: 1,
                 };
             }
             Err(_) => continue,
@@ -71,6 +75,7 @@ pub fn probe_tcp(host: &str, port: u16, timeout: Duration) -> ProbeResult {
         latency_ms: None,
         note: "TCP connect failed".into(),
         protocol: "tcp",
+        weight: 1,
     }
 }
 
@@ -90,6 +95,7 @@ pub fn probe_https(host: &str, timeout: Duration) -> ProbeResult {
                 latency_ms: None,
                 note: format!("HTTP client error: {e}"),
                 protocol: "https",
+                weight: 3,
             };
         }
     };
@@ -104,6 +110,7 @@ pub fn probe_https(host: &str, timeout: Duration) -> ProbeResult {
                 latency_ms: Some(ms),
                 note: format!("HTTPS {code}"),
                 protocol: "https",
+                weight: 3,
             }
         }
         Err(e) => ProbeResult {
@@ -111,41 +118,81 @@ pub fn probe_https(host: &str, timeout: Duration) -> ProbeResult {
             latency_ms: None,
             note: format!("HTTPS failed: {e}"),
             protocol: "https",
+            weight: 3,
         },
     }
 }
 
+/// Fast adaptive matrix: TCP gate, then HTTPS if TCP lives.
 pub fn probe_matrix_host(host: &str, timeout: Duration) -> Vec<ProbeResult> {
-    let mut out = Vec::with_capacity(2);
-    out.push(probe_tcp(host, 443, timeout));
-    out.push(probe_https(host, timeout));
-    out
+    let tcp_budget = timeout.min(Duration::from_millis(900));
+    let tcp = probe_tcp(host, 443, tcp_budget);
+    if !tcp.ok {
+        return vec![tcp];
+    }
+    let https_budget = timeout.min(Duration::from_millis(1200));
+    let https = probe_https(host, https_budget);
+    vec![tcp, https]
 }
 
+fn latency_points(ms: u32) -> u32 {
+    match ms {
+        0..=60 => 24,
+        61..=100 => 18,
+        101..=160 => 12,
+        161..=250 => 7,
+        251..=400 => 3,
+        _ => 1,
+    }
+}
+
+/// Multi-factor score 0–100: reachability × latency × protocol weight.
 pub fn score_probes(results: &[ProbeResult]) -> u32 {
     if results.is_empty() {
         return 0;
     }
-    let ok = results.iter().filter(|r| r.ok).count() as u32;
-    let total = results.len() as u32;
-    let base = (ok * 80) / total;
-    let latency_bonus: u32 = results
+
+    let weight_total: u32 = results.iter().map(|r| r.weight.max(1)).sum();
+    let reach: u32 = results
         .iter()
-        .filter_map(|r| r.latency_ms)
-        .map(|ms| {
-            if ms < 80 {
-                20
-            } else if ms < 150 {
-                12
-            } else if ms < 300 {
-                6
-            } else {
-                2
-            }
-        })
+        .filter(|r| r.ok)
+        .map(|r| r.weight.max(1) * 70)
         .sum::<u32>()
-        / total.max(1);
-    (base + latency_bonus).min(100)
+        / weight_total.max(1);
+
+    let lat_samples: Vec<u32> = results.iter().filter_map(|r| r.latency_ms).collect();
+    let latency = if lat_samples.is_empty() {
+        0
+    } else {
+        let sum: u32 = lat_samples.iter().copied().map(latency_points).sum();
+        (sum / lat_samples.len() as u32).min(24)
+    };
+
+    let https_ok = results
+        .iter()
+        .any(|r| r.ok && r.protocol == "https");
+    let https_bonus = if https_ok { 6 } else { 0 };
+
+    (reach + latency + https_bonus).min(100)
+}
+
+/// Soft prior for strategy names — tie-break only, never overrides bad probes.
+pub fn strategy_prior_bonus(name: &str) -> i32 {
+    let l = name.to_ascii_lowercase();
+    if l.contains("fake tls auto") && !l.contains("alt") && !l.contains("exp") {
+        3
+    } else if l.contains("fake tls auto") {
+        1
+    } else if l.contains("exp") {
+        -2
+    } else {
+        0
+    }
+}
+
+pub fn rank_score(probe_score: u32, strategy_name: &str) -> u32 {
+    let adjusted = probe_score as i32 + strategy_prior_bonus(strategy_name);
+    adjusted.clamp(0, 100) as u32
 }
 
 #[allow(dead_code)]

@@ -17,6 +17,8 @@ pub use elevate::is_elevated;
 pub use faults::{EngineFault, FaultCode};
 pub use managed::{EngineLayout, ManagedEngine};
 pub use preflight::{run_preflight, PreflightReport};
-pub use probe::{probe_matrix_host, probe_tcp, score_probes};
+pub use probe::{
+    probe_matrix_host, probe_tcp, rank_score, score_probes, strategy_prior_bonus,
+};
 pub use strategy::parse_strategy_bat;
 pub use updates::UpdateManager;

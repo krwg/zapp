@@ -1,4 +1,4 @@
-# zapp
+﻿# zapp
 
 ```
 ╔══════════════════════════════════════════╗
@@ -55,6 +55,22 @@ Upstream: [Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-d
 
 Resolution order: `ZAPP_ENGINE_DIR` → app data `engine/current` → local `vendor/zapret` (dev) → sibling Flowseal folders.
 
+## Engine for end users
+
+The **zapp source repo does not ship WinDivert / winws binaries** (drivers and bypass payloads stay off GitHub).
+
+Users still get a working client:
+
+1. **Installer / portable build** of zapp is just the UI + kernel.
+2. On first use (or via **Updates → Engine**), zapp downloads the official Flowseal pack from [Flowseal/zapret-discord-youtube releases](https://github.com/Flowseal/zapret-discord-youtube/releases) into app data.
+3. Optional: ship a *separate* offline engine archive with your release notes — never commit it into this git tree.
+
+Developers can point `ZAPP_ENGINE_DIR` or `vendor/zapret` at a local pack.
+
+## Brand
+
+Monochrome shield mark — `brand/` (SVG + PNG ladder 16…1024). Wired into sidebar, favicon, About, and Tauri icons.
+
 ## Design
 
 Monochrome Soft Minimalism. Light / Dark / System. Status colors only. No emoji, no neon.
@@ -62,3 +78,4 @@ Monochrome Soft Minimalism. Light / Dark / System. Status colors only. No emoji,
 ## License
 
 MIT · [krwg](https://github.com/krwg)
+
