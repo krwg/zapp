@@ -1,0 +1,52 @@
+/* ╔════════════════════════════════════════════════════╗
+ * ║     components/ui/DataTable/DataTable.module     ║
+ * ╚════════════════════════════════════════════════════╝ */
+
+.wrap {
+  width: 100%;
+  overflow: auto;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-md);
+}
+
+.th,
+.td {
+  padding: 12px 14px;
+  text-align: left;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.th {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--bg-surface-secondary);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.tr:last-child .td {
+  border-bottom: none;
+}
+
+.tr:hover .td {
+  background: var(--bg-hover);
+}
+
+.empty {
+  padding: var(--space-8);
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: var(--text-md);
+}

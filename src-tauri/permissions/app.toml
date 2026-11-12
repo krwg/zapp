@@ -1,0 +1,79 @@
+[[permission]]
+identifier = "allow-get-snapshot"
+description = "Read the full application snapshot"
+commands.allow = ["get_snapshot"]
+
+[[permission]]
+identifier = "allow-get-diagnostics"
+description = "Read live diagnostics state"
+commands.allow = ["get_diagnostics"]
+
+[[permission]]
+identifier = "allow-get-updates"
+description = "Read live update channel state"
+commands.allow = ["get_updates"]
+
+[[permission]]
+identifier = "allow-set-engine-running"
+description = "Start or stop the managed zapret engine"
+commands.allow = ["set_engine_running"]
+
+[[permission]]
+identifier = "allow-set-active-profile"
+description = "Activate a strategy profile"
+commands.allow = ["set_active_profile"]
+
+[[permission]]
+identifier = "allow-start-diagnostics"
+description = "Start automatic strategy diagnostics"
+commands.allow = ["start_diagnostics"]
+
+[[permission]]
+identifier = "allow-cancel-diagnostics"
+description = "Cancel a running diagnostics session"
+commands.allow = ["cancel_diagnostics"]
+
+[[permission]]
+identifier = "allow-select-diagnostic-strategy"
+description = "Apply a working strategy from diagnostics"
+commands.allow = ["select_diagnostic_strategy"]
+
+[[permission]]
+identifier = "allow-check-service"
+description = "Probe a single monitored service"
+commands.allow = ["check_service"]
+
+[[permission]]
+identifier = "allow-check-all-services"
+description = "Probe all monitored services"
+commands.allow = ["check_all_services"]
+
+[[permission]]
+identifier = "allow-check-updates"
+description = "Check Application / Engine / Strategies updates"
+commands.allow = ["check_updates"]
+
+[[permission]]
+identifier = "allow-update-channel"
+description = "Download and install an independent update channel"
+commands.allow = ["update_channel"]
+
+[[permission]]
+identifier = "allow-update-settings"
+description = "Update application settings"
+commands.allow = ["update_settings"]
+
+[[permission]]
+identifier = "allow-set-theme"
+description = "Set appearance theme mode"
+commands.allow = ["set_theme"]
+
+[[permission]]
+identifier = "allow-run-preflight"
+description = "Run engine preflight health checks"
+commands.allow = ["run_preflight"]
+
+[[permission]]
+identifier = "allow-reset-engine"
+description = "Hard-reset winws and WinDivert leftovers"
+commands.allow = ["reset_engine"]

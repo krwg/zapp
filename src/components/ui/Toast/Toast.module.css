@@ -1,0 +1,73 @@
+/* ╔════════════════════════════════════════════════════╗
+ * ║         components/ui/Toast/Toast.module         ║
+ * ╚════════════════════════════════════════════════════╝ */
+
+.viewport {
+  position: fixed;
+  right: var(--space-5);
+  bottom: var(--space-5);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: min(360px, calc(100vw - 40px));
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  box-shadow: var(--shadow-md);
+  animation: toastIn var(--duration-normal) var(--ease-out);
+}
+
+.leaving {
+  animation: toastOut var(--duration-fast) var(--ease-out) forwards;
+}
+
+.message {
+  flex: 1;
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
+  color: var(--text-primary);
+}
+
+.close {
+  color: var(--text-secondary);
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+}
+
+.close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.accent {
+  width: 3px;
+  align-self: stretch;
+  border-radius: 999px;
+  background: var(--border-strong);
+  flex-shrink: 0;
+}
+
+.success .accent {
+  background: var(--status-success);
+}
+
+.error .accent {
+  background: var(--status-error);
+}
+
+.warning .accent {
+  background: var(--status-warning);
+}

@@ -1,0 +1,37 @@
+/* ╔════════════════════════════════════════════════════╗
+ * ║   components/ui/ProgressBar/ProgressBar.module   ║
+ * ╚════════════════════════════════════════════════════╝ */
+
+.track {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg-surface-secondary);
+  overflow: hidden;
+}
+
+.fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--text-primary);
+  transition: width var(--duration-normal) var(--ease-out);
+}
+
+.indeterminate .fill {
+  width: 35%;
+  animation: progressIndeterminate 1.2s var(--ease-in-out) infinite;
+}
+
+.meta {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.value {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}

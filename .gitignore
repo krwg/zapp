@@ -1,0 +1,69 @@
+# ─────────────────────────────────────────────
+#  zapp — keep GitHub clean
+# ─────────────────────────────────────────────
+
+# dependencies / build
+node_modules/
+dist/
+dist-ssr/
+src-tauri/target/
+src-tauri/gen/
+src-tauri/WixTools/
+*.tsbuildinfo
+
+# logs & local noise
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+cargo-check.log
+
+# env / secrets / runtime helper state (never commit)
+.env
+.env.*
+!.env.example
+*.token
+helper.token
+**/helper.token
+**/winws.last.log
+**/winws.launch.cmd
+**/last_launch.json
+**/last_start_req.json
+**/zapp-helper.exe
+
+# engine packs & native binaries (downloaded / local only)
+vendor/**
+!vendor/.gitkeep
+!vendor/README.md
+*.exe
+*.dll
+*.sys
+*.pdb
+*.lib
+*.obj
+*.bin
+!public/**
+
+# editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*~
+
+# local / agent scratch
+.local-memory/
+.cursor/
+*.local
+.turbo/
+.cache/
