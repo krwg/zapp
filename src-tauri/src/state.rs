@@ -69,7 +69,7 @@ impl AppState {
                 settings: seed_settings(),
                 about: seed_about(),
                 system: SystemInfo {
-                    app_version: "0.2.0".into(),
+                    app_version: env!("CARGO_PKG_VERSION").into(),
                     engine_version: engine_version.clone(),
                     strategies_version: engine_version,
                     last_update_check_at: None,
@@ -313,27 +313,56 @@ impl AppState {
         Ok(list)
     }
 
-    pub fn update_channel(&self, id: UpdateChannelId) -> AppResult<UpdateChannel> {
-        let (channel, new_layout) = self.updates.update_channel(id.clone())?;
+    /// Check GitHub releases; when `auto_install` is on, install Available channels.
+    /// Returns whether the app must quit (Application installer launched).
+    pub fn check_updates_and_auto_install(&self, auto_install: bool) -> AppResult<bool> {
+        let _ = self.check_updates()?;
+        if !auto_install {
+            return Ok(false);
+        }
+        let outcomes = self.updates.auto_install_available()?;
+        let mut restart = false;
+        for outcome in outcomes {
+            self.apply_update_outcome(&outcome)?;
+            if outcome.restart_required {
+                restart = true;
+            }
+        }
+        Ok(restart)
+    }
+
+    pub fn update_channel(&self, id: UpdateChannelId) -> AppResult<(UpdateChannel, bool)> {
+        let outcome = self.updates.update_channel(id)?;
+        self.apply_update_outcome(&outcome)?;
+        Ok((outcome.channel, outcome.restart_required))
+    }
+
+    fn apply_update_outcome(
+        &self,
+        outcome: &crate::engine::UpdateOutcome,
+    ) -> AppResult<()> {
         let mut store = self.inner.lock().expect("state lock");
-        match id {
+        match outcome.channel.id {
             UpdateChannelId::Application => {
-                store.system.app_version = channel.current_version.clone();
-                store.about.version = channel.current_version.clone();
+                // Installer applies the new version; keep displayed target in notes/latest.
+                store.system.app_version = outcome.channel.current_version.clone();
+                store.about.version = outcome.channel.current_version.clone();
             }
             UpdateChannelId::Engine | UpdateChannelId::Strategies => {
-                store.system.engine_version = channel.current_version.clone();
-                store.system.strategies_version = channel.current_version.clone();
-                if let Some(layout) = new_layout {
+                store.system.engine_version = outcome.channel.current_version.clone();
+                store.system.strategies_version = outcome.channel.current_version.clone();
+                if let Some(layout) = outcome.layout.clone() {
                     let profiles = scan_strategy_profiles(&layout.root);
                     if !profiles.is_empty() {
                         store.profiles = profiles;
                     }
+                    drop(store);
                     self.engine.adopt_layout(layout)?;
+                    return Ok(());
                 }
             }
         }
-        Ok(channel)
+        Ok(())
     }
 
     pub fn update_settings(&self, patch: SettingsPatch) -> AppSettings {
@@ -533,18 +562,18 @@ fn seed_updates(engine_version: &str) -> Vec<UpdateChannel> {
             id: UpdateChannelId::Application,
             title: "Application".into(),
             description: "Клиент zapp. Независим от версии движка zapret.".into(),
-            current_version: "0.2.0".into(),
-            latest_version: "0.2.0".into(),
+            current_version: env!("CARGO_PKG_VERSION").into(),
+            latest_version: env!("CARGO_PKG_VERSION").into(),
             status: UpdateChannelStatus::UpToDate,
             last_checked_at: None,
             download_progress: None,
-            release_notes: "zapp 0.2 — hidden engine, real diagnostics, proper stop.".into(),
+            release_notes: "Источник: https://github.com/krwg/zapp/releases".into(),
             independent: true,
         },
         UpdateChannel {
             id: UpdateChannelId::Engine,
             title: "Engine".into(),
-            description: "Пакет Flowseal/zapret-discord-youtube (winws). Проверка: GitHub Releases.".into(),
+            description: "Пакет Flowseal/zapret-discord-youtube (winws). Auto-download с GitHub Releases.".into(),
             current_version: engine_version.into(),
             latest_version: engine_version.into(),
             status: UpdateChannelStatus::UpToDate,
@@ -588,7 +617,7 @@ fn seed_settings() -> AppSettings {
 fn seed_about() -> AppAbout {
     AppAbout {
         name: "zapp".into(),
-        version: "0.2.0".into(),
+        version: env!("CARGO_PKG_VERSION").into(),
         license: "MIT".into(),
         authors: vec!["krwg".into()],
         github_url: "https://github.com/krwg/zapp".into(),

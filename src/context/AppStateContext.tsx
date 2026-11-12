@@ -98,8 +98,25 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   }, [refresh])
 
   useEffect(() => {
+    let unlisten: (() => void) | undefined
+    void (async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event')
+        unlisten = await listen('app:quit-for-update', () => {
+          push('Обновление приложения запущено — zapp закроется', 'warning')
+        })
+      } catch {
+        /* browser mock */
+      }
+    })()
+    return () => {
+      unlisten?.()
+    }
+  }, [push])
+
+  useEffect(() => {
     if (loading) return
-    
+
     const timer = window.setInterval(() => {
       void (async () => {
         try {
@@ -108,7 +125,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           setUpdatesLive(snap.updates)
           setSnapshot(snap)
         } catch {
-          
+          /* keep last UI state */
         }
       })()
     }, 2500)

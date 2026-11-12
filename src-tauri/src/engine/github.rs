@@ -7,8 +7,7 @@ use serde::Deserialize;
 use crate::error::{AppError, AppResult};
 
 pub const FLOWSEAL_REPO: &str = "Flowseal/zapret-discord-youtube";
-const RELEASES_LATEST: &str =
-    "https://api.github.com/repos/Flowseal/zapret-discord-youtube/releases/latest";
+pub const ZAPP_REPO: &str = "krwg/zapp";
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct GithubRelease {
@@ -26,7 +25,8 @@ pub struct GithubAsset {
     pub size: u64,
 }
 
-pub fn fetch_latest_release() -> AppResult<GithubRelease> {
+pub fn fetch_latest_release(repo: &str) -> AppResult<GithubRelease> {
+    let url = format!("https://api.github.com/repos/{repo}/releases/latest");
     let client = reqwest::blocking::Client::builder()
         .user_agent("zapp/0.2 (+https://github.com/krwg/zapp)")
         .timeout(std::time::Duration::from_secs(20))
@@ -34,21 +34,29 @@ pub fn fetch_latest_release() -> AppResult<GithubRelease> {
         .map_err(|e| AppError::from(e.to_string()))?;
 
     let response = client
-        .get(RELEASES_LATEST)
+        .get(&url)
         .header("Accept", "application/vnd.github+json")
         .send()
-        .map_err(|e| AppError::from(format!("GitHub request failed: {e}")))?;
+        .map_err(|e| AppError::from(format!("GitHub request failed ({repo}): {e}")))?;
 
     if !response.status().is_success() {
         return Err(AppError::from(format!(
-            "GitHub API status {}",
+            "GitHub API {repo} status {}",
             response.status()
         )));
     }
 
     response
         .json::<GithubRelease>()
-        .map_err(|e| AppError::from(format!("GitHub JSON parse failed: {e}")))
+        .map_err(|e| AppError::from(format!("GitHub JSON parse failed ({repo}): {e}")))
+}
+
+pub fn fetch_flowseal_latest() -> AppResult<GithubRelease> {
+    fetch_latest_release(FLOWSEAL_REPO)
+}
+
+pub fn fetch_zapp_latest() -> AppResult<GithubRelease> {
+    fetch_latest_release(ZAPP_REPO)
 }
 
 impl GithubRelease {
@@ -57,6 +65,36 @@ impl GithubRelease {
             .iter()
             .find(|a| a.name.ends_with(".zip"))
             .or_else(|| self.assets.iter().find(|a| a.name.ends_with(".tar.gz")))
+    }
+
+    /// Prefer Windows installer assets for the Application channel.
+    pub fn preferred_app_asset(&self) -> Option<&GithubAsset> {
+        let rank = |name: &str| -> u8 {
+            let n = name.to_ascii_lowercase();
+            if n.ends_with(".msi") {
+                0
+            } else if n.contains("setup") && n.ends_with(".exe") {
+                1
+            } else if n.ends_with(".exe") {
+                2
+            } else if n.ends_with(".zip") && n.contains("zapp") {
+                3
+            } else if n.ends_with(".zip") {
+                4
+            } else {
+                9
+            }
+        };
+
+        self.assets
+            .iter()
+            .filter(|a| {
+                let n = a.name.to_ascii_lowercase();
+                n.ends_with(".msi")
+                    || n.ends_with(".exe")
+                    || n.ends_with(".zip")
+            })
+            .min_by_key(|a| rank(&a.name))
     }
 
     pub fn version(&self) -> &str {

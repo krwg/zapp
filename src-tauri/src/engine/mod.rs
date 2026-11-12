@@ -21,4 +21,4 @@ pub use probe::{
     probe_matrix_host, probe_tcp, rank_score, score_probes, strategy_prior_bonus,
 };
 pub use strategy::parse_strategy_bat;
-pub use updates::UpdateManager;
+pub use updates::{UpdateManager, UpdateOutcome};

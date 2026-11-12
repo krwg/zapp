@@ -2,11 +2,20 @@
 // ║                     commands                     ║
 // ╚════════════════════════════════════════════════════╝
 
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 
 use crate::error::AppResult;
 use crate::model::*;
 use crate::state::AppState;
+
+fn quit_after_installer(app: &AppHandle) {
+    let _ = app.emit("app:quit-for-update", ());
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(900));
+        handle.exit(0);
+    });
+}
 
 #[tauri::command]
 pub fn get_snapshot(state: State<'_, AppState>) -> AppSnapshot {
@@ -89,10 +98,19 @@ pub fn check_updates(state: State<'_, AppState>) -> AppResult<Vec<UpdateChannel>
 
 #[tauri::command]
 pub fn update_channel(
+    app: AppHandle,
     state: State<'_, AppState>,
     channel_id: UpdateChannelId,
 ) -> AppResult<UpdateChannel> {
-    state.update_channel(channel_id)
+    let (channel, restart) = state.update_channel(channel_id)?;
+    if restart {
+        state.history.push(
+            "updates",
+            "Application installer launched — quitting so files can update",
+        );
+        quit_after_installer(&app);
+    }
+    Ok(channel)
 }
 
 #[tauri::command]

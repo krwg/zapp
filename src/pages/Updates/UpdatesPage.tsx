@@ -34,10 +34,11 @@ export function UpdatesPage() {
         <div className={page.card}>
           <div className={page.cardTitle}>Update model</div>
           <p className={page.muted}>
-            zapp — клиент-ядро над zapret. Application, Engine и Strategies обновляются
-            раздельно: можно подтянуть новый билд движка, не меняя UI, и наоборот.
+            Application качается с GitHub <code>krwg/zapp</code> (msi/exe/zip). Engine и
+            Strategies — с Flowseal releases. При включённых Auto-check / Auto-install
+            проверка и установка идут сами при старте; иначе — кнопками ниже.
             {snapshot
-              ? ` Сейчас engine ${snapshot.system.engineVersion}, strategies ${snapshot.system.strategiesVersion}.`
+              ? ` Сейчас app ${snapshot.system.appVersion}, engine ${snapshot.system.engineVersion}.`
               : ''}
           </p>
         </div>

@@ -62,8 +62,11 @@ The **zapp source repo does not ship WinDivert / winws binaries** (drivers and b
 Users still get a working client:
 
 1. **Installer / portable build** of zapp is just the UI + kernel.
-2. On first use (or via **Updates → Engine**), zapp downloads the official Flowseal pack from [Flowseal/zapret-discord-youtube releases](https://github.com/Flowseal/zapret-discord-youtube/releases) into app data.
-3. Optional: ship a *separate* offline engine archive with your release notes — never commit it into this git tree.
+2. With **Auto-check / Auto-install** (default on), zapp on startup:
+   - checks [krwg/zapp releases](https://github.com/krwg/zapp/releases) for the Application (msi/exe/zip);
+   - checks [Flowseal releases](https://github.com/Flowseal/zapret-discord-youtube/releases) for Engine/Strategies;
+   - downloads and installs Available channels (Application launches the installer and quits so files can update).
+3. Manual **Updates** page still works the same way.
 
 Developers can point `ZAPP_ENGINE_DIR` or `vendor/zapret` at a local pack.
 

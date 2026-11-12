@@ -13,7 +13,7 @@ mod state;
 mod util;
 
 use state::AppState;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -58,18 +58,32 @@ pub fn run() {
                 ),
             );
 
-            
-            if state.snapshot().settings.auto_check_updates {
+            let auto_check = state.snapshot().settings.auto_check_updates;
+            let auto_install = state.snapshot().settings.auto_install_updates;
+            app.manage(state);
+
+            if auto_check {
                 let handle = app.handle().clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_secs(3));
-                    if let Some(state) = handle.try_state::<AppState>() {
-                        let _ = state.check_updates();
+                    let Some(state) = handle.try_state::<AppState>() else {
+                        return;
+                    };
+                    match state.check_updates_and_auto_install(auto_install) {
+                        Ok(true) => {
+                            log::info!("application installer launched — exiting for update");
+                            let _ = handle.emit("app:quit-for-update", ());
+                            std::thread::sleep(std::time::Duration::from_millis(900));
+                            handle.exit(0);
+                        }
+                        Ok(false) => {
+                            log::info!("update check finished (auto_install={auto_install})");
+                        }
+                        Err(e) => log::warn!("update check failed: {e}"),
                     }
                 });
             }
 
-            app.manage(state);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
