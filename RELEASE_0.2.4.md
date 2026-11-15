@@ -36,7 +36,7 @@ Faster Smart check, safer cancel/restore, clearer Bypass UI, and quieter Home si
 ### Known limitations
 
 - Probes are still **TCP/HTTPS**, not a real Discord client. **Voice (UDP)** can fail while Sites cards look green.
-- A high score can still feel worse than a hand-picked Flowseal mode on some ISPs — use **Modes** manually if needed.
+- From **0.2.4** Smart check is much faster and steadier; if something still feels off, open **Modes** and pick a strategy by hand.
 - Engine pack is downloaded from GitHub on first run; not bundled in the installer.
 - **MSI** has no cleanup page — prefer NSIS.
 - Not a VPN; no telemetry.
