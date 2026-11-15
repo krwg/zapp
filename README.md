@@ -4,8 +4,8 @@
 
 # zapp
 
-**A quiet desktop client for [zapret](https://github.com/bol-van/zapret) on Windows.**  
-Start and stop DPI-bypass strategies for YouTube and Discord without console windows.
+**Desktop client for [zapret](https://github.com/bol-van/zapret) on Windows.**  
+Run a DPI-bypass strategy for YouTube and Discord without a console window.
 
 [![Release](https://img.shields.io/github/v/release/krwg/zapp?style=flat-square&labelColor=0a0a0a&color=e8e8e8)](https://github.com/krwg/zapp/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/krwg/zapp/total?style=flat-square&labelColor=0a0a0a&color=e8e8e8)](https://github.com/krwg/zapp/releases)
@@ -18,48 +18,48 @@ Start and stop DPI-bypass strategies for YouTube and Discord without console win
 
 </div>
 
-## What it is
+I made zapp because I was tired of launching BAT files with a console window you shouldn’t close, guessing which Flowseal strategy fits your ISP, and babysitting `winws` by hand.
 
-zapp wraps the zapret engine and the [Flowseal strategy pack](https://github.com/Flowseal/zapret-discord-youtube) in a small native UI (Tauri 2 · React 19 · Rust).
+zapp wraps zapret and the [Flowseal strategy pack](https://github.com/Flowseal/zapret-discord-youtube) in a small Tauri app. Press Start, approve UAC once, and `winws` runs hidden in the background.
 
-- Runs `winws` hidden. No BAT consoles, one UAC prompt.
-- **Smart check** scores strategies against YouTube and Discord (including gateway and `discord.media` ports) and prefers a mode that passes both.
-- **Sites** shows reachability for YouTube, Discord and your own hosts.
-- Separate update channels for the app, the engine and the strategies.
-- EN / RU interface, Light / Dark / System theme, tray mode.
+Smart check tries each strategy against YouTube and Discord, including the Discord gateway and `discord.media` ports, and prefers one that passes both. The Sites page keeps checking YouTube, Discord and any hosts you add. The app, the engine and the strategies update separately. The interface comes in English and Russian, with light and dark themes, and the app can live in the tray.
 
-**What it is not:** a VPN, antivirus, or “protection” product. It does not hide your IP or encrypt traffic. It only changes how packets look to DPI on the path to blocked services. Check that using it is legal where you live.
+zapp is not a VPN. Your IP stays visible and nothing is encrypted; the only thing that changes is how your packets look to DPI. Check that this is legal where you live.
 
 ## Install
 
-1. Download `zapp_*_x64-setup.exe` from [Releases](https://github.com/krwg/zapp/releases/latest).
-2. Run it and open zapp.
-3. Press **Start** and approve the UAC prompt once.
-4. Wait for the engine pack to download, then run **Smart check**.
+1. Download `zapp_*_x64-setup.exe` from [Releases](https://github.com/krwg/zapp/releases/latest) and install it.
+2. Open zapp, press **Start**, approve the UAC prompt.
+3. Wait while the engine pack downloads, then run **Smart check**.
 
-Requirements: Windows 10/11 x64. Administrator rights are needed once to start the helper.
+Windows 10/11 x64. Admin rights are needed once, to start the helper.
 
-| File | Use |
-|------|-----|
-| `*_x64-setup.exe` (NSIS) | Recommended. Has a cleanup page for reinstalls. |
-| `*_x64_en-US.msi` | Alternative. No cleanup page. |
+The NSIS `setup.exe` is the one I recommend: on a reinstall it can wipe the old app data. The `.msi` works too but has no cleanup page. SHA256 sums are in each release.
 
-SHA256 sums are listed in each release.
+## What it does on your machine
 
-## Trust and privacy
+`winws` uses [WinDivert](https://reqrypt.org/windivert.html), which loads a kernel driver, so it needs admin rights. zapp starts one elevated helper, `zapp-helper.exe`, and talks to it over a token-authenticated TCP port on `127.0.0.1`. Nothing there is reachable from the network.
 
-- **Why UAC:** `winws` uses [WinDivert](https://reqrypt.org/windivert.html), which loads a kernel driver and needs admin rights. zapp starts one elevated helper (`zapp-helper.exe`) and talks to it on `127.0.0.1` over a token-authenticated local TCP port — not over the internet.
-- **What is downloaded:** on first run (and when Engine/Strategies update), the Flowseal pack from its GitHub Releases into `%APPDATA%\app.zapp.desktop\engine\`. Application updates come from [krwg/zapp](https://github.com/krwg/zapp/releases). The only other outbound calls are GitHub release checks and the optional site probes you trigger (YouTube, Discord, …).
-- **No accounts, no telemetry, no analytics.** Settings, logs and the engine pack stay under `%APPDATA%\app.zapp.desktop\` (helper state under `%LOCALAPPDATA%\zapp\`).
-- **Antivirus / SmartScreen:** WinDivert-based tools are often flagged as riskware or “hacking tools”. That is expected for a packet filter driver, not proof of malware. The zapp source is open; verify SHA256 of the installer, or build it yourself.
+On first run, and when Engine or Strategies update, zapp downloads the Flowseal pack from its GitHub Releases into `%APPDATA%\app.zapp.desktop\engine\`. App updates come from [krwg/zapp](https://github.com/krwg/zapp/releases). Apart from GitHub release checks and the site probes you start yourself, zapp makes no other requests. There is no telemetry. Settings and logs stay in `%APPDATA%\app.zapp.desktop\`, helper state in `%LOCALAPPDATA%\zapp\`.
 
-## Troubleshooting
+Antivirus and SmartScreen sometimes flag WinDivert-based tools, because a packet-filter driver looks suspicious by nature. The source is open, so you can check the installer's SHA256 or build it yourself.
 
-- **SmartScreen blocks the installer:** *More info → Run anyway*, or verify the SHA256 first.
-- **No strategy passes Smart check:** close other zapret / VPN / DPI tools and try again.
-- **Update stuck on "Installing…" (0.2.0 / 0.2.1):** run the installer from `%APPDATA%\app.zapp.desktop\downloads\` once (those builds could not request UAC).
+## Known rough edges
 
-To remove zapp completely, uninstall it and accept the cleanup prompt (or delete `%APPDATA%\app.zapp.desktop` and `%LOCALAPPDATA%\zapp` manually).
+Things I’d tell a friend before they install:
+
+- As of **0.2.3**, Smart check requires both YouTube and Discord (gateway + `discord.media` on Flowseal ports), not one blended score. It still only does **TCP/HTTPS probes**, not a real Discord client — **voice (UDP)** can fail while the Sites cards stay green.
+- Less often than before, but it happens: a high-scoring mode can still feel worse than a hand-picked Flowseal BAT. If Discord/YouTube misbehave, open **Modes** and activate one manually.
+- First launch needs GitHub access to download the engine pack. There is no offline pack picker in the UI yet.
+- Closing the window hides to the tray by default; the process is still running. Quit from the tray before reinstalling, or the setup cannot replace `zapp.exe`.
+- Windows 10/11 x64 only. No macOS or Linux build.
+- If someone is still on a build older than 0.2.2, its auto-update could not request UAC (os error 740) — install the current `setup.exe` from Releases once by hand.
+
+## If something doesn't work
+
+If SmartScreen blocks the installer, choose *More info → Run anyway*, or verify the SHA256 first. If no strategy passes Smart check, close other zapret, VPN or DPI tools and run it again.
+
+To remove zapp completely, uninstall it and accept the cleanup prompt. By hand, delete `%APPDATA%\app.zapp.desktop` and `%LOCALAPPDATA%\zapp`.
 
 ## Build from source
 
@@ -69,19 +69,17 @@ npm run tauri:dev     # desktop app
 npm run tauri:build   # NSIS + MSI
 ```
 
-Needs the Rust toolchain and MSVC Build Tools. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+You need the Rust toolchain and MSVC Build Tools. Architecture notes are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Credits
 
-zapp is only the client UI + core. The engine belongs to its authors.
+The engine isn't mine. zapp is the UI and the glue around it.
 
 | Project | Author |
 |---------|--------|
 | [zapret](https://github.com/bol-van/zapret) | [bol-van](https://github.com/bol-van) |
 | [zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube) | [Flowseal](https://github.com/Flowseal) |
 
-zapp does not ship WinDivert or `winws`. Their licenses stay with the upstream projects.
-
-## License
+zapp doesn't ship WinDivert or `winws`; their licenses stay with the upstream projects.
 
 MIT · [krwg](https://github.com/krwg)
