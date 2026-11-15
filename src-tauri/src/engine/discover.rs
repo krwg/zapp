@@ -10,6 +10,12 @@ use crate::engine::managed::EngineLayout;
 const FLOWSEAL_PREFIX: &str = "zapret-discord-youtube-";
 
 pub fn resolve_engine_layout(app_data: &Path) -> EngineLayout {
+    let layout = resolve_engine_layout_inner(app_data);
+    let _ = crate::engine::pack::ensure_flowseal_sidecars(&layout.root);
+    layout
+}
+
+fn resolve_engine_layout_inner(app_data: &Path) -> EngineLayout {
     for key in ["ZAPP_ENGINE_DIR", "HAPP_ZAPRET_ENGINE_DIR"] {
         if let Ok(dir) = std::env::var(key) {
             let path = PathBuf::from(dir);
@@ -24,7 +30,6 @@ pub fn resolve_engine_layout(app_data: &Path) -> EngineLayout {
         return EngineLayout::from_pack(current);
     }
 
-    
     if let Some(layout) = newest_under(app_data.join("engine")) {
         return layout;
     }
@@ -35,7 +40,6 @@ pub fn resolve_engine_layout(app_data: &Path) -> EngineLayout {
         }
     }
 
-    
     EngineLayout::under_app_data(app_data.to_path_buf(), "0.0.0")
 }
 
@@ -74,11 +78,26 @@ fn project_candidates() -> Vec<PathBuf> {
 
 fn newest_under(engine_root: PathBuf) -> Option<EngineLayout> {
     let entries = fs::read_dir(engine_root).ok()?;
-    let mut packs: Vec<PathBuf> = entries
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| looks_like_pack(p))
-        .collect();
+    let mut packs: Vec<PathBuf> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() || path.file_name().and_then(|n| n.to_str()) == Some("current") {
+            continue;
+        }
+        if looks_like_pack(&path) {
+            packs.push(path);
+            continue;
+        }
+        // Nested Flowseal zip layout: engine/1.10.4/zapret-discord-youtube-1.10.4/
+        if let Ok(nested) = fs::read_dir(&path) {
+            for child in nested.flatten() {
+                let child_path = child.path();
+                if looks_like_pack(&child_path) {
+                    packs.push(child_path);
+                }
+            }
+        }
+    }
     packs.sort_by(|a, b| version_key(b).cmp(&version_key(a)));
     packs.into_iter().next().map(EngineLayout::from_pack)
 }
@@ -180,7 +199,7 @@ pub fn scan_strategy_profiles(root: &Path) -> Vec<crate::model::Profile> {
                 kind,
                 strategy_type: "winws / flowseal".into(),
                 source: StrategySource::Bundled,
-                description: format!("Стратегия из пакета Flowseal: {name}.bat"),
+                description: format!("Режим из набора Flowseal · {name}"),
                 is_active: is_default,
                 is_auto_selected: false,
                 last_checked_at: None,

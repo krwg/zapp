@@ -2,10 +2,10 @@
 // ║ nts/domain/DiagnosticProgress/DiagnosticProgress ║
 // ╚════════════════════════════════════════════════════╝
 
-import { Play, RotateCcw, Square } from 'lucide-react'
+import { CircleStop, Play, RotateCcw } from 'lucide-react'
 import { Button } from '@/components/ui/Button/Button'
-import { ProgressBar } from '@/components/ui/ProgressBar/ProgressBar'
-import { StatusBadge, type StatusTone } from '@/components/ui/StatusBadge/StatusBadge'
+import { useLocale } from '@/context/LocaleContext'
+import type { MessageKey } from '@/i18n'
 import type { DiagnosticPhase, DiagnosticRun } from '@/types'
 import styles from './DiagnosticProgress.module.css'
 
@@ -16,104 +16,90 @@ interface DiagnosticProgressProps {
   onCancel: () => void
 }
 
-function phaseMeta(phase: DiagnosticPhase): { label: string; tone: StatusTone; pulse?: boolean } {
+function phaseText(phase: DiagnosticPhase, t: (key: MessageKey) => string): string {
   switch (phase) {
     case 'idle':
-      return { label: 'Idle', tone: 'neutral' }
+      return t('smartCheck.phaseIdle')
     case 'preparing':
-      return { label: 'Preparing', tone: 'warning', pulse: true }
+      return t('smartCheck.phasePreparing')
     case 'testing':
-      return { label: 'Testing', tone: 'warning', pulse: true }
+      return t('smartCheck.phaseTesting')
     case 'analyzing':
-      return { label: 'Analyzing', tone: 'warning', pulse: true }
+      return t('smartCheck.phaseAnalyzing')
     case 'completed':
-      return { label: 'Completed', tone: 'success' }
+      return t('smartCheck.phaseCompleted')
     case 'failed':
-      return { label: 'Failed', tone: 'error' }
+      return t('smartCheck.phaseFailed')
     case 'cancelled':
-      return { label: 'Cancelled', tone: 'neutral' }
-  }
-}
-
-function phaseText(phase: DiagnosticPhase): string {
-  switch (phase) {
-    case 'idle':
-      return 'Готово к запуску автоматического подбора стратегии.'
-    case 'preparing':
-      return 'Подготовка тестового окружения…'
-    case 'testing':
-      return 'Поочерёдная проверка стратегий.'
-    case 'analyzing':
-      return 'Сравнение результатов и ранжирование.'
-    case 'completed':
-      return 'Тестирование завершено. Можно выбрать рабочую стратегию.'
-    case 'failed':
-      return 'Диагностика завершилась с ошибкой.'
-    case 'cancelled':
-      return 'Диагностика отменена пользователем.'
+      return t('smartCheck.phaseCancelled')
   }
 }
 
 export function DiagnosticProgress({ run, busy, onStart, onCancel }: DiagnosticProgressProps) {
-  const meta = phaseMeta(run.phase)
+  const { t } = useLocale()
   const running = run.phase === 'preparing' || run.phase === 'testing' || run.phase === 'analyzing'
+  const progress = Math.max(0, Math.min(100, run.progress))
+  const angle = progress * 3.6
 
   return (
-    <section className={styles.card}>
-      <div className={styles.header}>
-        <div>
-          <h2 className={styles.title}>Automatic diagnostics</h2>
-          <p className={styles.phase}>{phaseText(run.phase)}</p>
-          {run.isDemo && <span className={styles.demo}>Демонстрационные данные</span>}
+    <section className={[styles.hero, running ? styles.heroLive : ''].join(' ')}>
+      <div className={styles.orbitWrap} aria-hidden>
+        <div className={styles.orbitOuter} />
+        <div className={styles.orbitMid} />
+        <div
+          className={styles.orbitFill}
+          style={{
+            background: `conic-gradient(var(--text-primary) ${angle}deg, transparent ${angle}deg)`,
+          }}
+        />
+        <div className={styles.orbitCore}>
+          <div className={styles.percent}>{progress}%</div>
+          <div className={styles.percentLabel}>{t('smartCheck.progress')}</div>
         </div>
-        <StatusBadge label={meta.label} tone={meta.tone} pulse={meta.pulse} />
+        {running && <span className={styles.pulseDot} />}
       </div>
 
-      <ProgressBar
-        value={run.progress}
-        label="Progress"
-        indeterminate={run.phase === 'preparing' || run.phase === 'analyzing'}
-      />
+      <div className={styles.copy}>
+        <p className={styles.phase}>{phaseText(run.phase, t)}</p>
+        {run.currentStrategy ? (
+          <p className={styles.current}>
+            {t('smartCheck.currentMode')} <strong>{run.currentStrategy}</strong>
+          </p>
+        ) : null}
+        {run.isDemo && <span className={styles.demo}>{t('smartCheck.demo')}</span>}
 
-      <div className={styles.stats}>
-        <div className={styles.stat}>
-          <div className={styles.statLabel}>Tested</div>
-          <div className={styles.statValue}>
-            {run.testedCount}/{run.totalCount}
+        <div className={styles.meters}>
+          <div className={styles.meter}>
+            <span>{t('smartCheck.tested')}</span>
+            <strong>
+              {run.testedCount}/{run.totalCount || '—'}
+            </strong>
+          </div>
+          <div className={styles.meter}>
+            <span>{t('smartCheck.working')}</span>
+            <strong>{run.workingCount}</strong>
           </div>
         </div>
-        <div className={styles.stat}>
-          <div className={styles.statLabel}>Working</div>
-          <div className={styles.statValue}>{run.workingCount}</div>
-        </div>
-        <div className={styles.stat}>
-          <div className={styles.statLabel}>Progress</div>
-          <div className={styles.statValue}>{run.progress}%</div>
-        </div>
-      </div>
 
-      {run.currentStrategy && (
-        <p className={styles.current}>
-          Current strategy: <strong>{run.currentStrategy}</strong>
-        </p>
-      )}
-
-      <div className={styles.actions}>
-        {running ? (
-          <Button variant="danger" onClick={onCancel} disabled={busy}>
-            <Square size={14} />
-            Cancel
-          </Button>
-        ) : (
-          <Button variant="primary" onClick={onStart} disabled={busy}>
-            {run.phase === 'completed' || run.phase === 'cancelled' ? (
-              <RotateCcw size={14} />
-            ) : (
-              <Play size={14} />
-            )}
-            {run.phase === 'completed' || run.phase === 'cancelled' ? 'Run again' : 'Start diagnostics'}
-          </Button>
-        )}
+        <div className={styles.actions}>
+          {running ? (
+            <Button variant="danger" onClick={onCancel} disabled={busy}>
+              <CircleStop size={15} strokeWidth={2} />
+              {t('smartCheck.cancel')}
+            </Button>
+          ) : (
+            <Button variant="primary" onClick={onStart} disabled={busy}>
+              {run.phase === 'completed' || run.phase === 'cancelled' ? (
+                <RotateCcw size={14} />
+              ) : (
+                <Play size={14} />
+              )}
+              {run.phase === 'completed' || run.phase === 'cancelled'
+                ? t('smartCheck.runAgain')
+                : t('smartCheck.start')}
+            </Button>
+          )}
+        </div>
       </div>
     </section>
   )

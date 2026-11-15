@@ -5,7 +5,8 @@
 import { RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/Button/Button'
 import { StatusBadge, type StatusTone } from '@/components/ui/StatusBadge/StatusBadge'
-import type { AvailabilityStatus, MonitoredService } from '@/types'
+import { useLocale } from '@/context/LocaleContext'
+import type { MonitoredService } from '@/types'
 import { formatLatency, formatRelative } from '@/utils/format'
 import styles from './ServiceCard.module.css'
 
@@ -16,21 +17,21 @@ interface ServiceCardProps {
   compact?: boolean
 }
 
-function toneFor(status: AvailabilityStatus): { label: string; tone: StatusTone; pulse?: boolean } {
-  switch (status) {
-    case 'available':
-      return { label: 'Available', tone: 'success' }
-    case 'unavailable':
-      return { label: 'Unavailable', tone: 'error' }
-    case 'checking':
-      return { label: 'Checking', tone: 'warning', pulse: true }
-    case 'unknown':
-      return { label: 'Unknown', tone: 'neutral' }
-  }
-}
-
 export function ServiceCard({ service, busy, onCheck, compact }: ServiceCardProps) {
-  const status = toneFor(service.status)
+  const { t, locale } = useLocale()
+
+  const status = ((): { label: string; tone: StatusTone; pulse?: boolean } => {
+    switch (service.status) {
+      case 'available':
+        return { label: t('status.available'), tone: 'success' }
+      case 'unavailable':
+        return { label: t('status.unavailable'), tone: 'error' }
+      case 'checking':
+        return { label: t('status.checking'), tone: 'warning', pulse: true }
+      case 'unknown':
+        return { label: t('status.unknown'), tone: 'neutral' }
+    }
+  })()
 
   return (
     <article className={styles.card}>
@@ -46,11 +47,11 @@ export function ServiceCard({ service, busy, onCheck, compact }: ServiceCardProp
 
       <div className={styles.footer}>
         <div className={styles.meta}>
-          {formatLatency(service.latencyMs)} · {formatRelative(service.lastCheckedAt)}
+          {formatLatency(service.latencyMs)} · {formatRelative(service.lastCheckedAt, locale)}
         </div>
         <Button size="sm" variant="ghost" onClick={onCheck} disabled={busy || service.status === 'checking'}>
           <RefreshCw size={14} />
-          Check
+          {t('common.check')}
         </Button>
       </div>
     </article>

@@ -39,6 +39,10 @@ pub struct PreflightReport {
 pub fn run_preflight(root: &Path, strategy: &str) -> PreflightReport {
     let mut checks = Vec::new();
 
+    // Flowseal BATs reference *-user.txt lists created by service.bat.
+    // Helper/winws path never runs that — create stubs before payload checks.
+    let _ = super::pack::ensure_flowseal_sidecars(root);
+
     let winws = root.join("bin").join("winws.exe");
     let winws_ok = winws.is_file();
     checks.push(PreflightCheck {

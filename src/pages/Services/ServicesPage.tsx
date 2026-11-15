@@ -7,16 +7,19 @@ import { RefreshCw } from 'lucide-react'
 import { ServiceCard } from '@/components/domain/ServiceCard/ServiceCard'
 import { PageHeader } from '@/components/layout/PageHeader/PageHeader'
 import { Button } from '@/components/ui/Button/Button'
+import { Hint } from '@/components/ui/Hint/Hint'
 import { DataTable, type DataColumn } from '@/components/ui/DataTable/DataTable'
 import { Dialog } from '@/components/ui/Dialog/Dialog'
 import { StatusBadge } from '@/components/ui/StatusBadge/StatusBadge'
 import { useAppState } from '@/context/AppStateContext'
+import { useLocale } from '@/context/LocaleContext'
 import type { MonitoredService, ServiceCheckHistoryItem } from '@/types'
 import { formatDateTime, formatLatency } from '@/utils/format'
 import page from '../shared/page.module.css'
 
 export function ServicesPage() {
   const { snapshot, checkService, checkAllServices, busy } = useAppState()
+  const { t, locale } = useLocale()
   const [selected, setSelected] = useState<MonitoredService | null>(null)
 
   if (!snapshot) return null
@@ -24,38 +27,46 @@ export function ServicesPage() {
   const historyColumns: DataColumn<ServiceCheckHistoryItem>[] = [
     {
       key: 'time',
-      header: 'Time',
-      render: (row) => formatDateTime(row.checkedAt),
+      header: t('sites.time'),
+      render: (row) => formatDateTime(row.checkedAt, locale),
     },
     {
       key: 'status',
-      header: 'Status',
+      header: t('sites.status'),
       render: (row) =>
         row.status === 'available' ? (
-          <StatusBadge label="Available" tone="success" />
+          <StatusBadge label={t('status.available')} tone="success" />
         ) : row.status === 'unavailable' ? (
-          <StatusBadge label="Unavailable" tone="error" />
+          <StatusBadge label={t('status.unavailable')} tone="error" />
         ) : (
           <StatusBadge label={row.status} tone="neutral" />
         ),
     },
     {
       key: 'latency',
-      header: 'Latency',
+      header: t('sites.latency'),
       render: (row) => formatLatency(row.latencyMs),
     },
     {
       key: 'note',
-      header: 'Note',
-      render: (row) => row.note ?? '—',
+      header: t('sites.note'),
+      render: (row) => row.note ?? t('common.dash'),
     },
   ]
 
   return (
     <div>
       <PageHeader
-        title="Services"
-        description="Мониторинг доступности YouTube, Discord и пользовательских ресурсов."
+        title={t('sites.title')}
+        description={t('sites.description')}
+        titleAddon={
+          <Hint
+            label={t('hints.sitesLabel')}
+            title={t('hints.sitesTitle')}
+            body={t('hints.sitesBody')}
+            wide
+          />
+        }
         actions={
           <Button
             size="sm"
@@ -64,7 +75,7 @@ export function ServicesPage() {
             disabled={busy['services:all']}
           >
             <RefreshCw size={14} />
-            Check all
+            {t('sites.checkAll')}
           </Button>
         }
       />
@@ -79,7 +90,7 @@ export function ServicesPage() {
                 onCheck={() => void checkService(service.id)}
               />
               <Button size="sm" variant="ghost" onClick={() => setSelected(service)}>
-                Details
+                {t('common.details')}
               </Button>
             </div>
           ))}
@@ -94,7 +105,7 @@ export function ServicesPage() {
         footer={
           <>
             <Button variant="ghost" onClick={() => setSelected(null)}>
-              Close
+              {t('common.close')}
             </Button>
             {selected && (
               <Button
@@ -103,7 +114,7 @@ export function ServicesPage() {
                 onClick={() => void checkService(selected.id)}
               >
                 <RefreshCw size={14} />
-                Recheck
+                {t('sites.recheck')}
               </Button>
             )}
           </>
@@ -113,19 +124,21 @@ export function ServicesPage() {
           <div className={page.stack}>
             <div className={page.kv}>
               <div className={page.kvRow}>
-                <span className={page.kvLabel}>Latency</span>
+                <span className={page.kvLabel}>{t('sites.latency')}</span>
                 <span className={page.kvValue}>{formatLatency(selected.latencyMs)}</span>
               </div>
               <div className={page.kvRow}>
-                <span className={page.kvLabel}>Last check</span>
-                <span className={page.kvValue}>{formatDateTime(selected.lastCheckedAt)}</span>
+                <span className={page.kvLabel}>{t('sites.lastCheck')}</span>
+                <span className={page.kvValue}>
+                  {formatDateTime(selected.lastCheckedAt, locale)}
+                </span>
               </div>
             </div>
             <DataTable
               columns={historyColumns}
               rows={selected.history}
               rowKey={(row) => row.id}
-              emptyMessage="История проверок пуста."
+              emptyMessage={t('sites.emptyHistory')}
             />
           </div>
         )}

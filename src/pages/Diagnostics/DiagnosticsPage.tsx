@@ -5,12 +5,13 @@
 import { DiagnosticProgress } from '@/components/domain/DiagnosticProgress/DiagnosticProgress'
 import { PageHeader } from '@/components/layout/PageHeader/PageHeader'
 import { Button } from '@/components/ui/Button/Button'
-import { DataTable, type DataColumn } from '@/components/ui/DataTable/DataTable'
+import { Hint } from '@/components/ui/Hint/Hint'
 import { StatusBadge } from '@/components/ui/StatusBadge/StatusBadge'
 import { useAppState } from '@/context/AppStateContext'
-import type { DiagnosticStrategyResult } from '@/types'
-import { formatDateTime, formatLatency } from '@/utils/format'
+import { useLocale } from '@/context/LocaleContext'
+import { formatLatency } from '@/utils/format'
 import page from '../shared/page.module.css'
+import styles from './DiagnosticsPage.module.css'
 
 export function DiagnosticsPage() {
   const {
@@ -20,80 +21,26 @@ export function DiagnosticsPage() {
     selectDiagnosticStrategy,
     busy,
   } = useAppState()
+  const { t } = useLocale()
 
   if (!diagnosticsLive) return null
 
-  const columns: DataColumn<DiagnosticStrategyResult>[] = [
-    {
-      key: 'name',
-      header: 'Strategy',
-      render: (row) => (
-        <div>
-          <div style={{ fontWeight: 500 }}>{row.name}</div>
-          <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>
-            {row.strategyType}
-          </div>
-        </div>
-      ),
-    },
-    {
-      key: 'result',
-      header: 'Result',
-      width: '120px',
-      render: (row) =>
-        row.success ? (
-          <StatusBadge label="Working" tone="success" />
-        ) : (
-          <StatusBadge label="Failed" tone="error" />
-        ),
-    },
-    {
-      key: 'latency',
-      header: 'Latency',
-      width: '100px',
-      render: (row) => formatLatency(row.latencyMs),
-    },
-    {
-      key: 'score',
-      header: 'Score',
-      width: '80px',
-      render: (row) => row.score,
-    },
-    {
-      key: 'notes',
-      header: 'Notes',
-      render: (row) => row.notes,
-    },
-    {
-      key: 'tested',
-      header: 'Tested',
-      width: '120px',
-      render: (row) => formatDateTime(row.testedAt),
-    },
-    {
-      key: 'action',
-      header: '',
-      width: '110px',
-      render: (row) => (
-        <Button
-          size="sm"
-          variant="secondary"
-          disabled={!row.success || busy[`diag-select:${row.id}`]}
-          onClick={() => void selectDiagnosticStrategy(row.id)}
-        >
-          Use
-        </Button>
-      ),
-    },
-  ]
-
   const sorted = [...diagnosticsLive.results].sort((a, b) => b.score - a.score)
+  const bestScore = sorted[0]?.score ?? 0
 
   return (
     <div>
       <PageHeader
-        title="Diagnostics"
-        description="zapp прогоняет все профили скрыто, без окон zapret, выбирает лучший и включает его."
+        title={t('smartCheck.title')}
+        description={t('smartCheck.description')}
+        titleAddon={
+          <Hint
+            label={t('hints.smartCheckLabel')}
+            title={t('hints.smartCheckTitle')}
+            body={t('hints.smartCheckBody')}
+            wide
+          />
+        }
       />
 
       <div className={page.stack}>
@@ -104,19 +51,79 @@ export function DiagnosticsPage() {
           onCancel={() => void cancelDiagnostics()}
         />
 
-        <section className={page.section}>
-          <div className={page.sectionHeader}>
-            <h2 className={page.sectionTitle}>Results</h2>
-            <span className={page.muted}>
-              {diagnosticsLive.workingCount} working of {diagnosticsLive.results.length}
+        <section className={styles.results}>
+          <div className={styles.resultsHead}>
+            <div className={styles.resultsTitleRow}>
+              <h2 className={styles.resultsTitle}>{t('smartCheck.results')}</h2>
+              <Hint
+                label={t('hints.resultsLabel')}
+                title={t('hints.resultsTitle')}
+                body={t('hints.resultsBody')}
+                wide
+              />
+            </div>
+            <span className={styles.resultsCount}>
+              {t('smartCheck.workingOf', {
+                working: diagnosticsLive.workingCount,
+                total: diagnosticsLive.results.length,
+              })}
             </span>
           </div>
-          <DataTable
-            columns={columns}
-            rows={sorted}
-            rowKey={(row) => row.id}
-            emptyMessage="Запустите диагностику — zapp проверит все стратегии."
-          />
+
+          {sorted.length === 0 ? (
+            <div className={styles.empty}>{t('smartCheck.empty')}</div>
+          ) : (
+            <div className={styles.rankList}>
+              {sorted.map((row, index) => {
+                const rank = index + 1
+                const width = bestScore > 0 ? Math.round((row.score / bestScore) * 100) : 0
+                return (
+                  <article
+                    key={row.id}
+                    className={[styles.rankCard, row.success ? styles.rankOk : styles.rankFail].join(
+                      ' ',
+                    )}
+                  >
+                    <div className={styles.rankIndex}>#{rank}</div>
+                    <div className={styles.rankBody}>
+                      <div className={styles.rankTop}>
+                        <div>
+                          <div className={styles.rankName}>{row.name}</div>
+                          <div className={styles.rankType}>{row.strategyType}</div>
+                        </div>
+                        <StatusBadge
+                          label={row.success ? t('status.working') : t('status.failed')}
+                          tone={row.success ? 'success' : 'error'}
+                        />
+                      </div>
+                      <div className={styles.scoreTrack} aria-hidden>
+                        <span className={styles.scoreFill} style={{ width: `${width}%` }} />
+                      </div>
+                      <div className={styles.rankMeta}>
+                        <span>
+                          {t('smartCheck.score')}: <strong>{row.score}</strong>
+                        </span>
+                        <span>
+                          {t('smartCheck.latency')}: <strong>{formatLatency(row.latencyMs)}</strong>
+                        </span>
+                        {row.notes ? <span className={styles.notes}>{row.notes}</span> : null}
+                      </div>
+                    </div>
+                    <div className={styles.rankAction}>
+                      <Button
+                        size="sm"
+                        variant={rank === 1 && row.success ? 'primary' : 'secondary'}
+                        disabled={!row.success || busy[`diag-select:${row.id}`]}
+                        onClick={() => void selectDiagnosticStrategy(row.id)}
+                      >
+                        {t('common.use')}
+                      </Button>
+                    </div>
+                  </article>
+                )
+              })}
+            </div>
+          )}
         </section>
       </div>
     </div>

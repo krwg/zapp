@@ -8,38 +8,90 @@ import {
   settingsStyles,
 } from '@/components/domain/SettingsGroup/SettingsGroup'
 import { PageHeader } from '@/components/layout/PageHeader/PageHeader'
+import { Hint } from '@/components/ui/Hint/Hint'
 import { Toggle } from '@/components/ui/Toggle/Toggle'
 import { useAppState } from '@/context/AppStateContext'
+import { useLocale } from '@/context/LocaleContext'
 import { useTheme } from '@/context/ThemeContext'
+import { useToast } from '@/context/ToastContext'
+import { useUiPrefs } from '@/context/UiPrefsContext'
+import { translate, type Locale } from '@/i18n'
 import type { ThemeMode } from '@/types'
 import page from '../shared/page.module.css'
-
-const THEME_OPTIONS: { value: ThemeMode; label: string }[] = [
-  { value: 'light', label: 'Light' },
-  { value: 'dark', label: 'Dark' },
-  { value: 'system', label: 'System' },
-]
 
 export function SettingsPage() {
   const { snapshot, updateSettings, busy } = useAppState()
   const { mode, setMode } = useTheme()
+  const { t, locale, setLocale } = useLocale()
+  const { push } = useToast()
+  const { confirmDisableProtection, showSidebarSession, setPref } = useUiPrefs()
 
   if (!snapshot) return null
-  const { settings, about } = snapshot
+  const { settings } = snapshot
   const disabled = !!busy.settings
+
+  const themeOptions: { value: ThemeMode; label: string }[] = [
+    { value: 'light', label: t('settings.light') },
+    { value: 'dark', label: t('settings.dark') },
+    { value: 'system', label: t('settings.system') },
+  ]
+
+  const localeOptions: { value: Locale; label: string }[] = [
+    { value: 'ru', label: 'Русский' },
+    { value: 'en', label: 'English' },
+  ]
+
+  const changeLocale = (next: Locale) => {
+    if (next === locale) return
+    setLocale(next)
+    const langName = next === 'ru' ? 'Русский' : 'English'
+    push({
+      title: translate(next, 'toast.languageChangedTitle'),
+      description: translate(next, 'toast.languageChangedDesc', { lang: langName }),
+      tone: 'success',
+    })
+  }
 
   return (
     <div>
       <PageHeader
-        title="Settings"
-        description="Внешний вид, автозапуск, обновления, диагностика и расширенные параметры."
+        title={t('settings.title')}
+        description={t('settings.description')}
+        titleAddon={
+          <Hint
+            label={t('hints.settingsLabel')}
+            title={t('hints.settingsTitle')}
+            body={t('hints.settingsBody')}
+            wide
+          />
+        }
       />
 
       <div className={page.stack}>
-        <SettingsGroup title="Appearance" description="Тема интерфейса.">
-          <SettingsRow title="Theme" hint="Light, Dark или следовать системе.">
-            <div className={settingsStyles.segment} role="group" aria-label="Theme">
-              {THEME_OPTIONS.map((opt) => (
+        <SettingsGroup>
+          <SettingsRow title={t('settings.language')} hint={t('settings.languageHint')}>
+            <div className={settingsStyles.segment} role="group" aria-label={t('settings.language')}>
+              {localeOptions.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  className={[
+                    settingsStyles.segmentBtn,
+                    locale === opt.value ? settingsStyles.segmentBtnActive : '',
+                  ].join(' ')}
+                  onClick={() => changeLocale(opt.value)}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </SettingsRow>
+        </SettingsGroup>
+
+        <SettingsGroup>
+          <SettingsRow title={t('settings.theme')} hint={t('settings.themeHint')}>
+            <div className={settingsStyles.segment} role="group" aria-label={t('settings.theme')}>
+              {themeOptions.map((opt) => (
                 <button
                   key={opt.value}
                   type="button"
@@ -60,15 +112,21 @@ export function SettingsPage() {
           </SettingsRow>
         </SettingsGroup>
 
-        <SettingsGroup title="Startup" description="Поведение при входе в систему.">
-          <SettingsRow title="Launch at startup" hint="Запускать zapp вместе с Windows.">
+        <SettingsGroup>
+          <SettingsRow
+            title={t('settings.launchAtStartup')}
+            hint={t('settings.launchAtStartupHint')}
+          >
             <Toggle
               checked={settings.startWithSystem}
               disabled={disabled}
               onChange={(checked) => void updateSettings({ startWithSystem: checked })}
             />
           </SettingsRow>
-          <SettingsRow title="Minimize to tray" hint="Скрывать окно в трей вместо закрытия.">
+          <SettingsRow
+            title={t('settings.minimizeToTray')}
+            hint={t('settings.minimizeToTrayHint')}
+          >
             <Toggle
               checked={settings.minimizeToTray}
               disabled={disabled}
@@ -77,11 +135,29 @@ export function SettingsPage() {
           </SettingsRow>
         </SettingsGroup>
 
-        <SettingsGroup
-          title="Updates"
-          description="Автопроверка каналов Application / Engine / Strategies."
-        >
-          <SettingsRow title="Auto-check updates">
+        <SettingsGroup>
+          <SettingsRow
+            title={t('settings.confirmDisable')}
+            hint={t('settings.confirmDisableHint')}
+          >
+            <Toggle
+              checked={confirmDisableProtection}
+              onChange={(checked) => setPref('confirmDisableProtection', checked)}
+            />
+          </SettingsRow>
+          <SettingsRow
+            title={t('settings.showSidebarSession')}
+            hint={t('settings.showSidebarSessionHint')}
+          >
+            <Toggle
+              checked={showSidebarSession}
+              onChange={(checked) => setPref('showSidebarSession', checked)}
+            />
+          </SettingsRow>
+        </SettingsGroup>
+
+        <SettingsGroup>
+          <SettingsRow title={t('settings.autoCheck')} hint={t('settings.updatesDesc')}>
             <Toggle
               checked={settings.autoCheckUpdates}
               disabled={disabled}
@@ -89,8 +165,8 @@ export function SettingsPage() {
             />
           </SettingsRow>
           <SettingsRow
-            title="Auto-install updates"
-            hint="Устанавливать доступные обновления без подтверждения."
+            title={t('settings.autoInstall')}
+            hint={t('settings.autoInstallHint')}
           >
             <Toggle
               checked={settings.autoInstallUpdates}
@@ -100,15 +176,21 @@ export function SettingsPage() {
           </SettingsRow>
         </SettingsGroup>
 
-        <SettingsGroup title="Diagnostics" description="Периодический автоподбор стратегий.">
-          <SettingsRow title="Automatic diagnostics">
+        <SettingsGroup>
+          <SettingsRow
+            title={t('settings.autoDiagnostics')}
+            hint={t('settings.diagnosticsDesc')}
+          >
             <Toggle
               checked={settings.autoDiagnostics}
               disabled={disabled}
               onChange={(checked) => void updateSettings({ autoDiagnostics: checked })}
             />
           </SettingsRow>
-          <SettingsRow title="Interval (hours)" hint="Как часто повторять автодиагностику.">
+          <SettingsRow
+            title={t('settings.intervalHours')}
+            hint={t('settings.intervalHint')}
+          >
             <input
               className={settingsStyles.input}
               type="number"
@@ -123,8 +205,8 @@ export function SettingsPage() {
           </SettingsRow>
         </SettingsGroup>
 
-        <SettingsGroup title="Network" description="Параметры проверки доступности сервисов.">
-          <SettingsRow title="Timeout (ms)">
+        <SettingsGroup>
+          <SettingsRow title={t('settings.timeoutMs')} hint={t('settings.networkDesc')}>
             <input
               className={settingsStyles.input}
               type="number"
@@ -138,7 +220,7 @@ export function SettingsPage() {
               }
             />
           </SettingsRow>
-          <SettingsRow title="Retries">
+          <SettingsRow title={t('settings.retries')}>
             <input
               className={settingsStyles.input}
               type="number"
@@ -153,77 +235,34 @@ export function SettingsPage() {
           </SettingsRow>
         </SettingsGroup>
 
-        <SettingsGroup title="Advanced" description="Пути и журналирование для интеграции с zapret.">
-          <SettingsRow title="Verbose logging" hint="Подробные логи для отладки движка.">
+        <SettingsGroup>
+          <SettingsRow title={t('settings.verboseLogging')} hint={t('settings.verboseHint')}>
             <Toggle
               checked={settings.advancedLogging}
               disabled={disabled}
               onChange={(checked) => void updateSettings({ advancedLogging: checked })}
             />
           </SettingsRow>
-          <SettingsRow title="Engine path" hint="Пусто — использовать управляемый движок клиента.">
+          <SettingsRow title={t('settings.enginePath')} hint={t('settings.enginePathHint')}>
             <input
               className={settingsStyles.select}
               style={{ minWidth: 220 }}
-              placeholder="Managed by app"
+              placeholder={t('settings.managedPlaceholder')}
               value={settings.enginePath ?? ''}
               disabled={disabled}
-              onChange={(e) =>
-                void updateSettings({ enginePath: e.target.value || null })
-              }
+              onChange={(e) => void updateSettings({ enginePath: e.target.value || null })}
             />
           </SettingsRow>
-          <SettingsRow title="Strategies path">
+          <SettingsRow title={t('settings.strategiesPath')}>
             <input
               className={settingsStyles.select}
               style={{ minWidth: 220 }}
-              placeholder="Managed by app"
+              placeholder={t('settings.managedPlaceholder')}
               value={settings.strategiesPath ?? ''}
               disabled={disabled}
-              onChange={(e) =>
-                void updateSettings({ strategiesPath: e.target.value || null })
-              }
+              onChange={(e) => void updateSettings({ strategiesPath: e.target.value || null })}
             />
           </SettingsRow>
-        </SettingsGroup>
-
-        <SettingsGroup id="about" title="About" description="О приложении.">
-          <div className={settingsStyles.row}>
-            <div className={settingsStyles.rowCopy} style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-              <img
-                src="/brand/shield-128.png"
-                alt="zapp"
-                width={48}
-                height={48}
-                style={{ borderRadius: 12 }}
-              />
-              <div>
-                <div className={settingsStyles.rowTitle}>{about.name}</div>
-                <div className={settingsStyles.rowHint}>
-                  Soft-minimal client · {about.license}
-                </div>
-              </div>
-            </div>
-          </div>
-          <SettingsRow title="Application" hint={`${about.name} · ${about.license}`}>
-            <span style={{ fontSize: 13, fontWeight: 500 }}>v{about.version}</span>
-          </SettingsRow>
-          <SettingsRow title="Authors" hint={about.authors.join(', ')}>
-            <span />
-          </SettingsRow>
-          <div className={settingsStyles.row}>
-            <div className={settingsStyles.rowCopy}>
-              <div className={settingsStyles.rowTitle}>Links</div>
-              <div className={settingsStyles.linkList} style={{ marginTop: 8 }}>
-                <a href={about.githubUrl} target="_blank" rel="noreferrer">
-                  GitHub repository
-                </a>
-                <a href={about.homepageUrl} target="_blank" rel="noreferrer">
-                  Homepage
-                </a>
-              </div>
-            </div>
-          </div>
         </SettingsGroup>
       </div>
     </div>

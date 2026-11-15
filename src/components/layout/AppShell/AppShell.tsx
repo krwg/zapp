@@ -4,6 +4,7 @@
 
 import { Outlet, useLocation } from 'react-router-dom'
 import { isTauriRuntime } from '@/api/tauriClient'
+import { BootLoader } from '@/components/ui/BootLoader/BootLoader'
 import { useAppState } from '@/context/AppStateContext'
 import { Sidebar } from '../Sidebar/Sidebar'
 import styles from './AppShell.module.css'
@@ -15,15 +16,21 @@ export function AppShell() {
 
   if (loading || !snapshot) {
     return (
-      <div className={styles.shell}>
-        <div className={styles.loading}>Загрузка zapp…</div>
+      <div className={[styles.shell, styles.shellBoot].join(' ')}>
+        <div className={styles.loading}>
+          <BootLoader />
+        </div>
       </div>
     )
   }
 
   return (
     <div className={styles.shell}>
-      <Sidebar appVersion={snapshot.about.version} engineStatus={snapshot.connection.status} />
+      <Sidebar
+        appVersion={snapshot.about.version}
+        engineStatus={snapshot.connection.status}
+        connection={snapshot.connection}
+      />
       <main className={styles.main}>
         <div className={styles.content}>
           {!tauri && (

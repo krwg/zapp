@@ -9,15 +9,13 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::engine::{
-    probe_matrix_host, rank_score, score_probes, strategy_prior_bonus,
+    diag_targets, probe_targets_parallel, rank_score, score_by_service, strategy_prior_bonus,
 };
 use crate::model::*;
 use crate::state::AppState;
 use crate::util::{new_id, now_iso};
 
-fn diag_targets() -> Vec<&'static str> {
-    vec!["youtube.com", "discord.com"]
-}
+const PASS_THRESHOLD: u32 = 55;
 
 pub fn run_diagnostics_worker(app: AppHandle, cancel: Arc<Mutex<bool>>) {
     let Some(state) = app.try_state::<AppState>() else {
@@ -72,7 +70,7 @@ pub fn run_diagnostics_worker(app: AppHandle, cancel: Arc<Mutex<bool>>) {
         .push("diagnostics", "Started adaptive profile diagnostics");
 
     let _ = state.engine.set_running(false);
-    thread::sleep(Duration::from_millis(120));
+    thread::sleep(Duration::from_millis(80));
 
     {
         let mut store = state.inner.lock().expect("state lock");
@@ -83,9 +81,10 @@ pub fn run_diagnostics_worker(app: AppHandle, cancel: Arc<Mutex<bool>>) {
 
     let timeout = {
         let store = state.inner.lock().expect("state lock");
-        Duration::from_millis(store.settings.network_timeout_ms.max(1200) as u64)
+        Duration::from_millis(store.settings.network_timeout_ms.max(900) as u64)
     };
 
+    let targets = diag_targets();
     let mut best: Option<(String, u32)> = None;
     let mut tested = 0u32;
 
@@ -96,13 +95,14 @@ pub fn run_diagnostics_worker(app: AppHandle, cancel: Arc<Mutex<bool>>) {
             return;
         }
 
-        // Early stop: excellent stable winner found — skip remaining EXP-heavy tail.
+        // Early stop only when every critical service already passes strongly.
+        // Prevents locking onto a YouTube-only winner while Discord is still broken.
         if let Some((_, best_score)) = &best {
             let remaining_exp_only = name.to_ascii_lowercase().contains("exp");
-            if *best_score >= 90 && tested >= 2 && remaining_exp_only {
+            if *best_score >= 92 && tested >= 3 && remaining_exp_only {
                 break;
             }
-            if *best_score >= 95 && tested >= 3 {
+            if *best_score >= 96 && tested >= 5 {
                 break;
             }
         }
@@ -116,46 +116,85 @@ pub fn run_diagnostics_worker(app: AppHandle, cancel: Arc<Mutex<bool>>) {
         let _ = app.emit("diagnostics:progress", ());
 
         let start_res = state.engine.start_no_elevate(Some(&name));
-        thread::sleep(Duration::from_millis(280));
+        // Give WinDivert filters a moment to attach before probing.
+        thread::sleep(Duration::from_millis(200));
 
-        let mut probes = Vec::new();
-        if start_res.is_ok() {
-            let budget = timeout.min(Duration::from_millis(1400));
-            for host in diag_targets() {
-                probes.extend(probe_matrix_host(host, budget));
-            }
-        }
+        let host_results = if start_res.is_ok() {
+            let budget = timeout.min(Duration::from_millis(1100));
+            probe_targets_parallel(&targets, budget)
+        } else {
+            Vec::new()
+        };
 
         let _ = state.engine.stop();
-        thread::sleep(Duration::from_millis(80));
+        thread::sleep(Duration::from_millis(50));
 
-        let raw = if start_res.is_ok() {
-            score_probes(&probes)
+        let adaptive = if start_res.is_ok() {
+            score_by_service(&host_results, PASS_THRESHOLD)
         } else {
-            0
+            crate::engine::AdaptiveScore {
+                score: 0,
+                success: false,
+                services: Vec::new(),
+                all_probes: Vec::new(),
+            }
         };
-        let score = rank_score(raw, &name);
-        let success = score >= 55;
-        let latency_ms = probes.iter().filter_map(|p| p.latency_ms).min();
+        let score = rank_score(adaptive.score, &name);
+        let success = adaptive.success && score >= PASS_THRESHOLD;
+        let latency_ms = adaptive
+            .all_probes
+            .iter()
+            .filter_map(|p| p.latency_ms)
+            .min();
+
+        let service_summary = adaptive
+            .services
+            .iter()
+            .map(|s| {
+                format!(
+                    "{} {}{}",
+                    s.service,
+                    s.score,
+                    if s.ok { "" } else { "!" }
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" · ");
+
         let notes = if let Err(e) = start_res {
             format!("Start failed: {e}")
         } else if success {
-            let ok = probes.iter().filter(|p| p.ok).count();
-            let avg = probes
+            let ok = adaptive.all_probes.iter().filter(|p| p.ok).count();
+            let avg = adaptive
+                .all_probes
                 .iter()
                 .filter_map(|p| p.latency_ms)
                 .sum::<u32>()
                 .checked_div(
-                    probes
+                    adaptive
+                        .all_probes
                         .iter()
                         .filter(|p| p.latency_ms.is_some())
                         .count()
                         .max(1) as u32,
                 )
                 .unwrap_or(0);
-            format!("{ok}/{} ok · avg {avg} ms · rank {score}", probes.len())
+            format!(
+                "{ok}/{} ok · avg {avg} ms · rank {score} · {service_summary}",
+                adaptive.all_probes.len()
+            )
+        } else if !adaptive.services.is_empty() {
+            let failed = adaptive
+                .services
+                .iter()
+                .filter(|s| !s.ok)
+                .map(|s| s.service.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("Weak service(s): {failed} · {service_summary}")
         } else {
-            probes
+            adaptive
+                .all_probes
                 .iter()
                 .find(|p| !p.ok)
                 .map(|p| p.note.clone())
@@ -217,19 +256,19 @@ pub fn run_diagnostics_worker(app: AppHandle, cancel: Arc<Mutex<bool>>) {
             .sort_by(|a, b| b.score.cmp(&a.score).then(a.latency_ms.cmp(&b.latency_ms)));
     }
     let _ = app.emit("diagnostics:progress", ());
-    thread::sleep(Duration::from_millis(120));
+    thread::sleep(Duration::from_millis(80));
 
     if let Some((best_name, score)) = best {
         apply_best(&state, &best_name);
         state.history.push(
             "diagnostics",
-            format!("Selected '{best_name}' (adaptive score {score})"),
+            format!("Selected '{best_name}' (adaptive score {score}; YouTube+Discord required)"),
         );
         let _ = state.engine.start_no_elevate(Some(&best_name));
     } else {
         state.history.push(
             "diagnostics",
-            "No working strategy found; restoring previous state",
+            "No strategy passed both YouTube and Discord; restoring previous state",
         );
         restore_previous(&state, was_running, previous.as_deref());
     }

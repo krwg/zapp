@@ -3,8 +3,11 @@
 // ╚════════════════════════════════════════════════════╝
 
 import { Power } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Dialog } from '@/components/ui/Dialog/Dialog'
 import { Button } from '@/components/ui/Button/Button'
-import { StatusBadge } from '@/components/ui/StatusBadge/StatusBadge'
+import { useLocale } from '@/context/LocaleContext'
+import { useUiPrefs } from '@/context/UiPrefsContext'
 import type { ConnectionState } from '@/types'
 import { formatUptime } from '@/utils/format'
 import styles from './ConnectionCard.module.css'
@@ -16,75 +19,136 @@ interface ConnectionCardProps {
   onReset?: () => void
 }
 
-function mapStatus(status: ConnectionState['status']) {
-  switch (status) {
-    case 'running':
-      return { label: 'Connected', tone: 'success' as const, title: 'Running', pulse: true }
-    case 'stopped':
-      return { label: 'Stopped', tone: 'neutral' as const, title: 'Stopped', pulse: false }
-    case 'starting':
-      return { label: 'Starting', tone: 'warning' as const, title: 'Starting…', pulse: true }
-    case 'stopping':
-      return { label: 'Stopping', tone: 'warning' as const, title: 'Stopping…', pulse: true }
-    case 'error':
-      return { label: 'Error', tone: 'error' as const, title: 'Error', pulse: false }
-  }
-}
-
 export function ConnectionCard({ connection, busy, onToggle, onReset }: ConnectionCardProps) {
-  const mapped = mapStatus(connection.status)
+  const { t, locale } = useLocale()
+  const { confirmDisableProtection } = useUiPrefs()
+  const [tick, setTick] = useState(() => Date.now())
+  const [confirmOpen, setConfirmOpen] = useState(false)
+
   const isOn = connection.status === 'running' || connection.status === 'starting'
+  const isBusy =
+    busy || connection.status === 'starting' || connection.status === 'stopping'
+
+  useEffect(() => {
+    if (connection.status !== 'running') return
+    const id = window.setInterval(() => setTick(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [connection.status])
+
+  const uptimeSeconds =
+    connection.status === 'running' && connection.sessionStartedAt
+      ? Math.max(
+          0,
+          Math.floor((tick - new Date(connection.sessionStartedAt).getTime()) / 1000),
+        )
+      : connection.uptimeSeconds
+
+  const statusTitle = (() => {
+    switch (connection.status) {
+      case 'running':
+        return t('status.running')
+      case 'stopped':
+        return t('status.stopped')
+      case 'starting':
+        return t('status.starting')
+      case 'stopping':
+        return t('status.stopping')
+      case 'error':
+        return t('status.error')
+    }
+  })()
+
+  const handleToggle = () => {
+    if (isOn && confirmDisableProtection) {
+      setConfirmOpen(true)
+      return
+    }
+    onToggle()
+  }
 
   return (
-    <section className={styles.card}>
-      <div className={styles.top}>
-        <div>
-          <div className={styles.label}>Connection Status</div>
-          <div className={styles.statusRow}>
-            <h2 className={styles.statusText}>{mapped.title}</h2>
-            <StatusBadge label={mapped.label} tone={mapped.tone} pulse={mapped.pulse} />
-          </div>
-        </div>
-        <div className={styles.actions}>
-          {onReset && (
-            <Button
-              variant="ghost"
-              onClick={onReset}
-              disabled={busy || connection.status === 'starting' || connection.status === 'stopping'}
-            >
-              Reset
-            </Button>
-          )}
-          <Button
-            variant={isOn ? 'secondary' : 'primary'}
-            onClick={onToggle}
-            disabled={busy || connection.status === 'starting' || connection.status === 'stopping'}
+    <>
+      <section className={[styles.card, isOn ? styles.cardOn : ''].join(' ')}>
+        <div className={styles.hero}>
+          <button
+            type="button"
+            className={[
+              styles.power,
+              isOn ? styles.powerOn : styles.powerOff,
+              isBusy ? styles.powerBusy : '',
+            ].join(' ')}
+            onClick={handleToggle}
+            disabled={isBusy}
+            aria-pressed={isOn}
+            aria-label={isOn ? t('connection.disable') : t('connection.enable')}
           >
-            <Power size={15} />
-            {isOn ? 'Stop' : 'Start'}
-          </Button>
-        </div>
-      </div>
+            <span className={styles.powerRing} aria-hidden />
+            <span className={styles.powerCore}>
+              <Power size={28} strokeWidth={2.25} />
+            </span>
+          </button>
 
-      <div className={styles.meta}>
-        <div className={styles.metaItem}>
-          <div className={styles.metaLabel}>Active strategy</div>
-          <div className={styles.metaValue}>{connection.strategyName ?? '—'}</div>
-        </div>
-        <div className={styles.metaItem}>
-          <div className={styles.metaLabel}>Session uptime</div>
-          <div className={styles.metaValue}>
-            {connection.status === 'running' ? formatUptime(connection.uptimeSeconds) : '—'}
+          <div className={styles.heroCopy}>
+            <div className={styles.label}>{t('connection.label')}</div>
+            <h2 className={styles.statusText}>{statusTitle}</h2>
+            <p className={styles.hint}>
+              {isOn ? t('home.protectionOnHint') : t('home.protectionOffHint')}
+              {' · '}
+              {isOn ? t('home.tapToDisable') : t('home.tapToEnable')}
+            </p>
+
+            <div className={styles.session}>
+              <span className={styles.sessionLabel}>{t('home.session')}</span>
+              <span className={styles.sessionValue}>
+                {connection.status === 'running'
+                  ? formatUptime(uptimeSeconds, { withSeconds: true, locale })
+                  : t('common.dash')}
+              </span>
+            </div>
           </div>
-        </div>
-      </div>
 
-      {connection.lastError && (
-        <div className={styles.errorBox} role="alert">
-          <div className={styles.errorTitle}>Последняя ошибка</div>
-          <div className={styles.errorText}>{connection.lastError}</div>
+          {onReset && (
+            <button
+              type="button"
+              className={styles.repair}
+              onClick={onReset}
+              disabled={isBusy}
+            >
+              {t('connection.repair')}
+            </button>
+          )}
         </div>
-      )}
-    </section>
+
+        {connection.lastError && (
+          <div className={styles.errorBox} role="alert">
+            <div className={styles.errorTitle}>{t('connection.lastError')}</div>
+            <div className={styles.errorText}>{connection.lastError}</div>
+          </div>
+        )}
+      </section>
+
+      <Dialog
+        open={confirmOpen}
+        title={t('settings.confirmDisableTitle')}
+        description={t('settings.confirmDisableBody')}
+        onClose={() => setConfirmOpen(false)}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setConfirmOpen(false)}>
+              {t('common.cancel')}
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                setConfirmOpen(false)
+                onToggle()
+              }}
+            >
+              {t('common.confirm')}
+            </Button>
+          </>
+        }
+      />
+    </>
   )
 }

@@ -1,0 +1,103 @@
+/* ╔════════════════════════════════════════════════════╗
+ * ║    components/ui/BootLoader/BootLoader.module    ║
+ * ╚════════════════════════════════════════════════════╝ */
+
+.root {
+  display: grid;
+  place-items: center;
+  justify-items: center;
+  gap: var(--space-5);
+  width: min(100%, 240px);
+  margin: 0 auto;
+}
+
+.mark {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+}
+
+.ring,
+.ringDelay {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--text-primary) 22%, transparent);
+  border-top-color: var(--text-primary);
+  animation: spin 1.1s linear infinite;
+}
+
+.ringDelay {
+  inset: 7px;
+  opacity: 0.45;
+  animation-duration: 1.6s;
+  animation-direction: reverse;
+}
+
+.core {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-primary);
+  animation: pulse 1.4s var(--ease-in-out) infinite;
+}
+
+.copy {
+  display: grid;
+  gap: var(--space-3);
+  justify-items: center;
+  min-width: 120px;
+}
+
+.brand {
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.03em;
+  color: var(--text-primary);
+}
+
+.bar {
+  width: 120px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--border-subtle);
+  overflow: hidden;
+}
+
+.barFill {
+  display: block;
+  height: 100%;
+  width: 40%;
+  border-radius: inherit;
+  background: var(--text-primary);
+  animation: slide 1.2s var(--ease-in-out) infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(0.72);
+    opacity: 0.55;
+  }
+}
+
+@keyframes slide {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}

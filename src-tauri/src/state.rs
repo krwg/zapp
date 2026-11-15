@@ -295,13 +295,63 @@ impl AppState {
     }
 
     pub fn check_all_services(&self) -> AppResult<Vec<MonitoredService>> {
-        let ids: Vec<String> = {
-            let store = self.inner.lock().expect("state lock");
-            store.services.iter().map(|s| s.id.clone()).collect()
+        let jobs: Vec<(String, String, u64)> = {
+            let mut store = self.inner.lock().expect("state lock");
+            let timeout_ms = store.settings.network_timeout_ms.max(1000) as u64;
+            store
+                .services
+                .iter_mut()
+                .map(|s| {
+                    s.status = AvailabilityStatus::Checking;
+                    (s.id.clone(), s.host.clone(), timeout_ms)
+                })
+                .collect()
         };
-        let mut out = Vec::new();
-        for id in ids {
-            out.push(self.check_service(&id)?);
+
+        let probes: Vec<(String, crate::engine::ProbeResult)> = thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(jobs.len());
+            for (id, host, timeout_ms) in &jobs {
+                handles.push(scope.spawn(move || {
+                    let probe = probe_tcp(
+                        host,
+                        443,
+                        Duration::from_millis(*timeout_ms),
+                    );
+                    (id.clone(), probe)
+                }));
+            }
+            handles
+                .into_iter()
+                .filter_map(|h| h.join().ok())
+                .collect()
+        });
+
+        let mut out = Vec::with_capacity(probes.len());
+        let mut store = self.inner.lock().expect("state lock");
+        for (id, probe) in probes {
+            let Some(service) = store.services.iter_mut().find(|s| s.id == id) else {
+                continue;
+            };
+            service.status = probe.status();
+            service.latency_ms = probe.latency_ms;
+            service.last_checked_at = Some(now_iso());
+            service.diagnostic_summary = if probe.ok {
+                format!("Available. {}", probe.note)
+            } else {
+                format!("Unavailable. {}", probe.note)
+            };
+            service.history.insert(
+                0,
+                ServiceCheckHistoryItem {
+                    id: new_id("chk"),
+                    checked_at: service.last_checked_at.clone().unwrap_or_default(),
+                    status: service.status.clone(),
+                    latency_ms: service.latency_ms,
+                    note: Some(probe.note),
+                },
+            );
+            service.history.truncate(12);
+            out.push(service.clone());
         }
         Ok(out)
     }
@@ -316,6 +366,7 @@ impl AppState {
     /// Check GitHub releases; when `auto_install` is on, install Available channels.
     /// Returns whether the app must quit (Application installer launched).
     pub fn check_updates_and_auto_install(&self, auto_install: bool) -> AppResult<bool> {
+        let _ = self.bootstrap_engine_if_needed()?;
         let _ = self.check_updates()?;
         if !auto_install {
             return Ok(false);
@@ -329,6 +380,31 @@ impl AppState {
             }
         }
         Ok(restart)
+    }
+
+    /// Download Flowseal into app data when the pack is missing/incomplete.
+    /// Also creates Flowseal user-list sidecars the BATs expect.
+    pub fn bootstrap_engine_if_needed(&self) -> AppResult<bool> {
+        let layout = self.engine.layout();
+        let _ = crate::engine::ensure_flowseal_sidecars(&layout.root);
+        match self.updates.ensure_engine_installed(&layout)? {
+            Some(new_layout) => {
+                let outcome = crate::engine::UpdateOutcome {
+                    channel: self
+                        .updates
+                        .list()
+                        .into_iter()
+                        .find(|c| c.id == UpdateChannelId::Engine)
+                        .ok_or_else(|| AppError::from("Engine channel missing"))?,
+                    layout: Some(new_layout),
+                    restart_required: false,
+                };
+                self.apply_update_outcome(&outcome)?;
+                self.history.push("engine", "Flowseal engine pack installed");
+                Ok(true)
+            }
+            None => Ok(false),
+        }
     }
 
     pub fn update_channel(&self, id: UpdateChannelId) -> AppResult<(UpdateChannel, bool)> {
@@ -506,11 +582,11 @@ fn seed_services() -> Vec<MonitoredService> {
         MonitoredService {
             id: "svc-discord".into(),
             name: "Discord".into(),
-            host: "discord.com".into(),
+            host: "gateway.discord.gg".into(),
             status: AvailabilityStatus::Available,
             last_checked_at: Some("2026-11-12T09:55:00.000Z".into()),
             latency_ms: Some(112),
-            diagnostic_summary: "Доступен. Voice endpoints отвечают.".into(),
+            diagnostic_summary: "Доступен. Gateway отвечает.".into(),
             is_built_in: true,
             history: vec![ServiceCheckHistoryItem {
                 id: "d1".into(),

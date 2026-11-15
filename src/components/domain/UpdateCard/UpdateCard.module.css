@@ -5,7 +5,7 @@
 .card {
   background: var(--bg-surface);
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
   padding: var(--space-5);
   display: grid;
   gap: var(--space-4);
@@ -39,7 +39,7 @@
 
 .box {
   padding: var(--space-3);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   background: var(--bg-surface-secondary);
 }
 
@@ -55,10 +55,51 @@
   font-variant-numeric: tabular-nums;
 }
 
-.notes {
+.notesBlock {
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
+  overflow: hidden;
+  background: var(--bg-surface-secondary);
+}
+
+.notesToggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+}
+
+.notesToggle:hover {
+  background: var(--bg-hover);
+}
+
+.chevron {
+  color: var(--text-tertiary);
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.chevronOpen {
+  transform: rotate(180deg);
+}
+
+.notesBody {
+  padding: 0 var(--space-4) var(--space-4);
+}
+
+.notesPreview {
+  margin: 0;
+  padding: 0 var(--space-4) var(--space-3);
   font-size: var(--text-sm);
   color: var(--text-secondary);
-  line-height: var(--leading-relaxed);
+  line-height: var(--leading-normal);
 }
 
 .footer {

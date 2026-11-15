@@ -7,18 +7,21 @@ import styles from './SettingsGroup.module.css'
 
 interface SettingsGroupProps {
   id?: string
-  title: string
+  title?: string
   description?: string
   children: ReactNode
 }
 
 export function SettingsGroup({ id, title, description, children }: SettingsGroupProps) {
+  const showHeader = Boolean(title || description)
   return (
     <section id={id} className={styles.group}>
-      <div className={styles.header}>
-        <h2 className={styles.title}>{title}</h2>
-        {description && <p className={styles.description}>{description}</p>}
-      </div>
+      {showHeader && (
+        <div className={styles.header}>
+          {title ? <h2 className={styles.title}>{title}</h2> : null}
+          {description ? <p className={styles.description}>{description}</p> : null}
+        </div>
+      )}
       <div className={styles.body}>{children}</div>
     </section>
   )

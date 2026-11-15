@@ -12,8 +12,14 @@ import {
 } from 'react'
 import { ToastViewport, type ToastItem, type ToastTone } from '@/components/ui/Toast/Toast'
 
+export interface ToastPayload {
+  title: string
+  description?: string
+  tone?: ToastTone
+}
+
 interface ToastContextValue {
-  push: (message: string, tone?: ToastTone) => void
+  push: (payload: ToastPayload) => void
 }
 
 const ToastContext = createContext<ToastContextValue | null>(null)
@@ -26,10 +32,19 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const push = useCallback(
-    (message: string, tone: ToastTone = 'neutral') => {
+    (payload: ToastPayload) => {
+      const tone = payload.tone ?? 'neutral'
       const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
-      setItems((prev) => [...prev, { id, message, tone }])
-      const ms = tone === 'error' ? 8000 : 3200
+      setItems((prev) => [
+        ...prev.slice(-4),
+        {
+          id,
+          title: payload.title,
+          description: payload.description,
+          tone,
+        },
+      ])
+      const ms = tone === 'error' ? 8000 : 3800
       window.setTimeout(() => dismiss(id), ms)
     },
     [dismiss],

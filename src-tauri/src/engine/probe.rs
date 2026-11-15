@@ -3,6 +3,7 @@
 // ╚════════════════════════════════════════════════════╝
 
 use std::net::{TcpStream, ToSocketAddrs};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::model::AvailabilityStatus;
@@ -25,6 +26,60 @@ impl ProbeResult {
             AvailabilityStatus::Unavailable
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct DiagTarget {
+    pub service: &'static str,
+    pub host: &'static str,
+    pub port: u16,
+    /// When true, run HTTPS after a successful TCP connect.
+    pub https: bool,
+    /// Soft hosts affect the score but cannot alone fail the service.
+    pub critical: bool,
+}
+
+/// Critical endpoints used by Smart Check.
+/// Discord needs gateway + `discord.media` on Flowseal alt ports (2053…).
+pub fn diag_targets() -> Vec<DiagTarget> {
+    vec![
+        DiagTarget {
+            service: "youtube",
+            host: "youtube.com",
+            port: 443,
+            https: true,
+            critical: true,
+        },
+        DiagTarget {
+            service: "discord",
+            host: "discord.com",
+            port: 443,
+            https: true,
+            critical: true,
+        },
+        DiagTarget {
+            service: "discord",
+            host: "gateway.discord.gg",
+            port: 443,
+            https: true,
+            critical: true,
+        },
+        // Matches `--hostlist-domains=discord.media --filter-tcp=2053,...` in Flowseal bats.
+        DiagTarget {
+            service: "discord",
+            host: "discord.media",
+            port: 2053,
+            https: false,
+            critical: true,
+        },
+        DiagTarget {
+            service: "discord",
+            host: "cdn.discordapp.com",
+            port: 443,
+            https: true,
+            critical: false,
+        },
+    ]
 }
 
 pub fn probe_tcp(host: &str, port: u16, timeout: Duration) -> ProbeResult {
@@ -123,16 +178,75 @@ pub fn probe_https(host: &str, timeout: Duration) -> ProbeResult {
     }
 }
 
-/// Fast adaptive matrix: TCP gate, then HTTPS if TCP lives.
+/// Fast adaptive matrix: TCP:443 gate, then HTTPS if TCP lives.
 pub fn probe_matrix_host(host: &str, timeout: Duration) -> Vec<ProbeResult> {
-    let tcp_budget = timeout.min(Duration::from_millis(900));
+    let tcp_budget = timeout.min(Duration::from_millis(700));
     let tcp = probe_tcp(host, 443, tcp_budget);
     if !tcp.ok {
         return vec![tcp];
     }
-    let https_budget = timeout.min(Duration::from_millis(1200));
+    let https_budget = timeout.min(Duration::from_millis(900));
     let https = probe_https(host, https_budget);
     vec![tcp, https]
+}
+
+fn probe_matrix_target(target: &DiagTarget, timeout: Duration) -> Vec<ProbeResult> {
+    let tcp_budget = timeout.min(Duration::from_millis(700));
+    let mut tcp = probe_tcp(target.host, target.port, tcp_budget);
+    if target.port != 443 {
+        tcp.note = format!("TCP:{} {}", target.port, if tcp.ok { "OK" } else { "fail" });
+        // Alt-port media endpoints: try a couple of Flowseal ports if the first fails.
+        if !tcp.ok {
+            for alt in [2083u16, 8443] {
+                let mut retry = probe_tcp(target.host, alt, tcp_budget);
+                if retry.ok {
+                    retry.note = format!("TCP:{alt} OK");
+                    return vec![retry];
+                }
+            }
+            return vec![tcp];
+        }
+        return vec![tcp];
+    }
+    if !tcp.ok || !target.https {
+        return vec![tcp];
+    }
+    let https_budget = timeout.min(Duration::from_millis(900));
+    let https = probe_https(target.host, https_budget);
+    vec![tcp, https]
+}
+
+/// Probe every host in parallel (scoped threads). Order matches `targets`.
+pub fn probe_targets_parallel(
+    targets: &[DiagTarget],
+    timeout: Duration,
+) -> Vec<(DiagTarget, Vec<ProbeResult>)> {
+    thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(targets.len());
+        for target in targets {
+            handles.push(scope.spawn(move || {
+                let probes = probe_matrix_target(target, timeout);
+                (*target, probes)
+            }));
+        }
+        handles
+            .into_iter()
+            .map(|h| {
+                h.join().unwrap_or_else(|_| {
+                    (
+                        DiagTarget {
+                            service: "unknown",
+                            host: "unknown",
+                            port: 443,
+                            https: true,
+                            critical: true,
+                        },
+                        Vec::new(),
+                    )
+                })
+            })
+            .collect()
+    })
 }
 
 fn latency_points(ms: u32) -> u32 {
@@ -168,12 +282,91 @@ pub fn score_probes(results: &[ProbeResult]) -> u32 {
         (sum / lat_samples.len() as u32).min(24)
     };
 
-    let https_ok = results
-        .iter()
-        .any(|r| r.ok && r.protocol == "https");
+    let https_ok = results.iter().any(|r| r.ok && r.protocol == "https");
     let https_bonus = if https_ok { 6 } else { 0 };
 
     (reach + latency + https_bonus).min(100)
+}
+
+#[derive(Debug, Clone)]
+pub struct ServiceScore {
+    pub service: String,
+    pub score: u32,
+    pub ok: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct AdaptiveScore {
+    pub score: u32,
+    pub success: bool,
+    pub services: Vec<ServiceScore>,
+    pub all_probes: Vec<ProbeResult>,
+}
+
+/// Score by service. A strategy only "works" when every critical service passes.
+/// Within a service, the worst *critical* host decides pass/fail so gateway
+/// failures cannot hide behind a living discord.com homepage. Soft hosts
+/// (CDN) only nudge the numeric score.
+pub fn score_by_service(
+    host_results: &[(DiagTarget, Vec<ProbeResult>)],
+    pass_threshold: u32,
+) -> AdaptiveScore {
+    let mut all_probes = Vec::new();
+    let mut by_service: Vec<(&str, Vec<(bool, u32)>)> = Vec::new();
+
+    for (target, probes) in host_results {
+        all_probes.extend(probes.iter().cloned());
+        let host_score = score_probes(probes);
+        if let Some((_, scores)) = by_service.iter_mut().find(|(s, _)| *s == target.service) {
+            scores.push((target.critical, host_score));
+        } else {
+            by_service.push((target.service, vec![(target.critical, host_score)]));
+        }
+    }
+
+    let services: Vec<ServiceScore> = by_service
+        .into_iter()
+        .map(|(service, scores)| {
+            let critical: Vec<u32> = scores
+                .iter()
+                .filter(|(critical, _)| *critical)
+                .map(|(_, s)| *s)
+                .collect();
+            let soft: Vec<u32> = scores
+                .iter()
+                .filter(|(critical, _)| !*critical)
+                .map(|(_, s)| *s)
+                .collect();
+
+            let critical_floor = critical.iter().copied().min().unwrap_or(0);
+            let soft_avg = if soft.is_empty() {
+                critical_floor
+            } else {
+                soft.iter().sum::<u32>() / soft.len() as u32
+            };
+            // 85% critical floor, 15% soft hosts — soft cannot rescue a dead gateway.
+            let score = ((critical_floor * 85) + (soft_avg * 15)) / 100;
+            ServiceScore {
+                service: service.into(),
+                score,
+                ok: critical_floor >= pass_threshold,
+            }
+        })
+        .collect();
+
+    let success = !services.is_empty() && services.iter().all(|s| s.ok);
+    let score = if services.is_empty() {
+        0
+    } else {
+        services.iter().map(|s| s.score).sum::<u32>() / services.len() as u32
+    };
+
+    AdaptiveScore {
+        score,
+        success,
+        services,
+        all_probes,
+    }
 }
 
 /// Soft prior for strategy names — tie-break only, never overrides bad probes.
@@ -200,6 +393,7 @@ pub fn default_targets() -> Vec<(&'static str, u16)> {
     vec![
         ("youtube.com", 443),
         ("discord.com", 443),
+        ("gateway.discord.gg", 443),
         ("github.com", 443),
     ]
 }

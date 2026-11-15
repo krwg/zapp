@@ -21,6 +21,13 @@
     "allow-update-settings",
     "allow-set-theme",
     "allow-run-preflight",
-    "allow-reset-engine"
+    "allow-reset-engine",
+    "autostart:allow-enable",
+    "autostart:allow-disable",
+    "autostart:allow-is-enabled",
+    "core:window:allow-hide",
+    "core:window:allow-show",
+    "core:window:allow-set-focus",
+    "core:window:allow-unminimize"
   ]
 }

@@ -115,10 +115,25 @@ pub fn update_channel(
 
 #[tauri::command]
 pub fn update_settings(
+    app: AppHandle,
     state: State<'_, AppState>,
     patch: SettingsPatch,
 ) -> AppSettings {
-    state.update_settings(patch)
+    let sync_autostart = patch.start_with_system;
+    let settings = state.update_settings(patch);
+    if let Some(enabled) = sync_autostart {
+        use tauri_plugin_autostart::ManagerExt;
+        let autolaunch = app.autolaunch();
+        let result = if enabled {
+            autolaunch.enable()
+        } else {
+            autolaunch.disable()
+        };
+        if let Err(e) = result {
+            log::warn!("autostart sync failed: {e}");
+        }
+    }
+    settings
 }
 
 #[tauri::command]

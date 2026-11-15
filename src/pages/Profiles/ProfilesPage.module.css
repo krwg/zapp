@@ -1,0 +1,84 @@
+/* ╔════════════════════════════════════════════════════╗
+ * ║        pages/Profiles/ProfilesPage.module        ║
+ * ╚════════════════════════════════════════════════════╝ */
+
+.sectionLabel {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: var(--space-3);
+}
+
+.activeBlock,
+.listBlock {
+  display: grid;
+}
+
+.activeCard {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xl);
+  padding: var(--space-4) var(--space-5);
+  display: grid;
+  gap: var(--space-3);
+}
+
+.activeTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.activeCopy {
+  min-width: 0;
+}
+
+.activeName {
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.02em;
+}
+
+.activeType {
+  margin-top: 2px;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.activeDesc {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  line-height: var(--leading-normal);
+  max-width: 62ch;
+}
+
+.activeMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.activeMeta strong {
+  color: var(--text-secondary);
+  font-weight: var(--weight-medium);
+}
+
+.dotSep {
+  opacity: 0.5;
+}
+
+.activeActions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.list {
+  display: grid;
+  gap: var(--space-3);
+}

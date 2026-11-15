@@ -10,21 +10,44 @@ pub mod helper;
 mod history;
 mod model;
 mod state;
+mod tray;
 mod util;
 
 use state::AppState;
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager, WindowEvent};
+
+const ARG_MINIMIZED: &str = "--minimized";
+
+fn launched_minimized() -> bool {
+    std::env::args().any(|a| a == ARG_MINIMIZED)
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+            tray::show_main_window(app);
         }))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![ARG_MINIMIZED]),
+        ))
+        .on_window_event(|window, event| {
+            if window.label() != "main" {
+                return;
+            }
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                let hide_to_tray = window
+                    .app_handle()
+                    .try_state::<AppState>()
+                    .map(|s| s.snapshot().settings.minimize_to_tray)
+                    .unwrap_or(true);
+                if hide_to_tray {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -60,7 +83,47 @@ pub fn run() {
 
             let auto_check = state.snapshot().settings.auto_check_updates;
             let auto_install = state.snapshot().settings.auto_install_updates;
+            let start_with_system = state.snapshot().settings.start_with_system;
             app.manage(state);
+
+            tray::setup_tray(app.handle())?;
+
+            {
+                use tauri_plugin_autostart::ManagerExt;
+                let autolaunch = app.autolaunch();
+                if start_with_system {
+                    if let Err(e) = autolaunch.enable() {
+                        log::warn!("autostart enable failed: {e}");
+                    }
+                } else if let Err(e) = autolaunch.disable() {
+                    log::warn!("autostart disable failed: {e}");
+                }
+            }
+
+            if launched_minimized() {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+            }
+
+            // First-run repair: Flowseal is not embedded in the installer.
+            // Always ensure sidecars / download pack ASAP (don't wait for Updates UI).
+            {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    let Some(state) = handle.try_state::<AppState>() else {
+                        return;
+                    };
+                    match state.bootstrap_engine_if_needed() {
+                        Ok(true) => {
+                            log::info!("Flowseal engine bootstrapped into app data");
+                            let _ = handle.emit("engine:bootstrapped", ());
+                        }
+                        Ok(false) => log::info!("Flowseal engine pack OK"),
+                        Err(e) => log::warn!("engine bootstrap failed: {e}"),
+                    }
+                });
+            }
 
             if auto_check {
                 let handle = app.handle().clone();

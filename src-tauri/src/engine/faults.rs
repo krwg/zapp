@@ -83,8 +83,8 @@ fn catalog(code: &FaultCode) -> (&'static str, &'static str, bool) {
             true,
         ),
         FaultCode::StrategyPayloadMissing => (
-            "Нет payload-файлов стратегии",
-            "В bin/ отсутствуют fake TLS/QUIC файлы, на которые ссылается профиль.",
+            "Не хватает файлов стратегии",
+            "Отсутствуют списки или payload (lists/*.txt, bin/*.bin), на которые ссылается профиль. Обновите Engine или переустановите пакет Flowseal.",
             false,
         ),
         FaultCode::UacCancelled => (

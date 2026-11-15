@@ -4,8 +4,8 @@
 
 .viewport {
   position: fixed;
+  top: var(--space-5);
   right: var(--space-5);
-  bottom: var(--space-5);
   z-index: 1000;
   display: flex;
   flex-direction: column;
@@ -19,55 +19,59 @@
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  border-radius: var(--radius-xl);
   background: var(--bg-surface);
   border: 1px solid var(--border-default);
   box-shadow: var(--shadow-md);
   animation: toastIn var(--duration-normal) var(--ease-out);
 }
 
-.leaving {
-  animation: toastOut var(--duration-fast) var(--ease-out) forwards;
+.success {
+  border-color: color-mix(in srgb, var(--status-success) 28%, var(--border-default));
 }
 
-.message {
+.error {
+  border-color: color-mix(in srgb, var(--status-error) 28%, var(--border-default));
+}
+
+.warning {
+  border-color: color-mix(in srgb, var(--status-warning) 28%, var(--border-default));
+}
+
+.body {
   flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.title {
   font-size: var(--text-md);
-  line-height: var(--leading-normal);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
   color: var(--text-primary);
+  line-height: 1.3;
+}
+
+.description {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  line-height: var(--leading-normal);
 }
 
 .close {
   color: var(--text-secondary);
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   display: grid;
   place-items: center;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
+  flex-shrink: 0;
+  margin: -4px -4px 0 0;
 }
 
 .close:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
-}
-
-.accent {
-  width: 3px;
-  align-self: stretch;
-  border-radius: 999px;
-  background: var(--border-strong);
-  flex-shrink: 0;
-}
-
-.success .accent {
-  background: var(--status-success);
-}
-
-.error .accent {
-  background: var(--status-error);
-}
-
-.warning .accent {
-  background: var(--status-warning);
 }

@@ -67,3 +67,7 @@ Desktop.ini
 *.local
 .turbo/
 .cache/
+
+# local release copies (GitHub Releases is the source of truth)
+dist-release/
+

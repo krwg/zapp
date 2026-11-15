@@ -2,6 +2,7 @@
 // ║           components/ui/Toggle/Toggle            ║
 // ╚════════════════════════════════════════════════════╝
 
+import { useId } from 'react'
 import styles from './Toggle.module.css'
 
 interface ToggleProps {
@@ -14,7 +15,8 @@ interface ToggleProps {
 }
 
 export function Toggle({ checked, onChange, label, hint, disabled, id }: ToggleProps) {
-  const inputId = id ?? `toggle-${label?.replace(/\s+/g, '-').toLowerCase() ?? 'x'}`
+  const autoId = useId()
+  const inputId = id ?? autoId
 
   return (
     <label className={styles.root} htmlFor={inputId}>

@@ -20,6 +20,7 @@ import type {
   Profile,
   UpdateChannel,
 } from '@/types'
+import { useLocale } from './LocaleContext'
 import { useToast } from './ToastContext'
 import { useTheme } from './ThemeContext'
 
@@ -49,6 +50,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const api = getApi()
   const { push } = useToast()
   const { setMode } = useTheme()
+  const { t } = useLocale()
   const [loading, setLoading] = useState(true)
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null)
   const [diagnosticsLive, setDiagnosticsLive] = useState<DiagnosticRun | null>(null)
@@ -69,8 +71,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       try {
         await fn()
       } catch (err) {
-        const message = formatInvokeError(err)
-        push(message, 'error')
+        const message = formatInvokeError(err, t('common.unknownError'))
+        push({
+          title: t('toast.errorTitle'),
+          description: message,
+          tone: 'error',
+        })
         try {
           await refresh()
         } catch {
@@ -80,7 +86,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         setBusy((prev) => ({ ...prev, [key]: false }))
       }
     },
-    [push, refresh],
+    [push, refresh, t],
   )
 
   useEffect(() => {
@@ -103,7 +109,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       try {
         const { listen } = await import('@tauri-apps/api/event')
         unlisten = await listen('app:quit-for-update', () => {
-          push('Обновление приложения запущено — zapp закроется', 'warning')
+          push({
+            title: t('toast.quitForUpdateTitle'),
+            description: t('toast.quitForUpdateDesc'),
+            tone: 'warning',
+          })
         })
       } catch {
         /* browser mock */
@@ -112,7 +122,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     return () => {
       unlisten?.()
     }
-  }, [push])
+  }, [push, t])
 
   useEffect(() => {
     if (loading) return
@@ -149,54 +159,86 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       )
       const status = await api.setEngineRunning(!running)
       await refresh()
-      push(status === 'running' ? 'Движок запущен' : 'Движок остановлен', 'success')
+      if (status === 'running') {
+        push({
+          title: t('toast.protectionOnTitle'),
+          description: t('toast.protectionOnDesc'),
+          tone: 'success',
+        })
+      } else {
+        push({
+          title: t('toast.protectionOffTitle'),
+          description: t('toast.protectionOffDesc'),
+          tone: 'success',
+        })
+      }
     })
-  }, [api, push, refresh, snapshot, withBusy])
+  }, [api, push, refresh, snapshot, t, withBusy])
 
   const resetEngine = useCallback(async () => {
     await withBusy('engine', async () => {
       await api.resetEngine()
       await refresh()
-      push('Сброс winws выполнен', 'warning')
+      push({
+        title: t('toast.repairedTitle'),
+        description: t('toast.repairedDesc'),
+        tone: 'warning',
+      })
     })
-  }, [api, push, refresh, withBusy])
+  }, [api, push, refresh, t, withBusy])
 
   const setActiveProfile = useCallback(
     async (id: string) => {
       await withBusy(`profile:${id}`, async () => {
         await api.setActiveProfile(id)
         await refresh()
-        push('Профиль активирован', 'success')
+        push({
+          title: t('toast.modeActivatedTitle'),
+          description: t('toast.modeActivatedDesc'),
+          tone: 'success',
+        })
       })
     },
-    [api, push, refresh, withBusy],
+    [api, push, refresh, t, withBusy],
   )
 
   const startDiagnostics = useCallback(async () => {
     await withBusy('diagnostics', async () => {
       const run = await api.startDiagnostics()
       setDiagnosticsLive(run)
-      push('Диагностика запущена', 'neutral')
+      push({
+        title: t('toast.checkStartedTitle'),
+        description: t('toast.checkStartedDesc'),
+        tone: 'neutral',
+      })
     })
-  }, [api, push, withBusy])
+  }, [api, push, t, withBusy])
 
   const cancelDiagnostics = useCallback(async () => {
     await withBusy('diagnostics', async () => {
       const run = await api.cancelDiagnostics()
       setDiagnosticsLive(run)
-      push('Диагностика отменена', 'warning')
+      push({
+        title: t('toast.checkCancelledTitle'),
+        description: t('toast.checkCancelledDesc'),
+        tone: 'warning',
+      })
     })
-  }, [api, push, withBusy])
+  }, [api, push, t, withBusy])
 
   const selectDiagnosticStrategy = useCallback(
     async (resultId: string) => {
       await withBusy(`diag-select:${resultId}`, async () => {
         await api.selectDiagnosticStrategy(resultId)
         await refresh()
-        push('Стратегия применена', 'success')
+        push({
+          title: t('toast.modeAppliedTitle'),
+          description: t('toast.modeAppliedDesc'),
+          tone: 'success',
+        })
       })
     },
-    [api, push, refresh, withBusy],
+    [api, push, refresh, t, withBusy],
   )
 
   const checkService = useCallback(
@@ -219,18 +261,27 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             services: prev.services.map((s) => (s.id === id ? updated : s)),
           }
         })
+        push({
+          title: t('toast.siteCheckTitle'),
+          description: t('toast.siteCheckDesc', { name: updated.name }),
+          tone: 'success',
+        })
       })
     },
-    [api, withBusy],
+    [api, push, t, withBusy],
   )
 
   const checkAllServices = useCallback(async () => {
     await withBusy('services:all', async () => {
       const list: MonitoredService[] = await api.checkAllServices()
       setSnapshot((prev) => (prev ? { ...prev, services: list } : prev))
-      push('Проверка сервисов завершена', 'success')
+      push({
+        title: t('toast.sitesCheckedTitle'),
+        description: t('toast.sitesCheckedDesc'),
+        tone: 'success',
+      })
     })
-  }, [api, push, withBusy])
+  }, [api, push, t, withBusy])
 
   const checkUpdates = useCallback(async () => {
     await withBusy('updates:check', async () => {
@@ -245,9 +296,13 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             }
           : prev,
       )
-      push('Проверка обновлений завершена', 'neutral')
+      push({
+        title: t('toast.updatesCheckedTitle'),
+        description: t('toast.updatesCheckedDesc'),
+        tone: 'neutral',
+      })
     })
-  }, [api, push, withBusy])
+  }, [api, push, t, withBusy])
 
   const updateChannel = useCallback(
     async (id: UpdateChannel['id']) => {
@@ -258,13 +313,17 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         try {
           await api.updateChannel(id)
           await refresh()
-          push(`Канал ${id} обновлён`, 'success')
+          push({
+            title: t('toast.channelUpdatedTitle', { id }),
+            description: t('toast.channelUpdatedDesc'),
+            tone: 'success',
+          })
         } finally {
           window.clearInterval(poll)
         }
       })
     },
-    [api, push, refresh, withBusy],
+    [api, push, refresh, t, withBusy],
   )
 
   const updateSettings = useCallback(
@@ -273,10 +332,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         const next = await api.updateSettings(patch)
         if (patch.appearance) setMode(patch.appearance)
         setSnapshot((prev) => (prev ? { ...prev, settings: next } : prev))
-        push('Настройки сохранены', 'success')
+        push({
+          title: t('toast.settingsSavedTitle'),
+          description: t('toast.settingsSavedDesc'),
+          tone: 'success',
+        })
       })
     },
-    [api, push, setMode, withBusy],
+    [api, push, setMode, t, withBusy],
   )
 
   const value = useMemo<AppStateContextValue>(
@@ -329,7 +392,7 @@ export function useAppState() {
   return ctx
 }
 
-function formatInvokeError(err: unknown): string {
+function formatInvokeError(err: unknown, fallback: string): string {
   if (typeof err === 'string') return err
   if (err instanceof Error && err.message) return err.message
   if (err && typeof err === 'object') {
@@ -341,7 +404,7 @@ function formatInvokeError(err: unknown): string {
       
     }
   }
-  return 'Неизвестная ошибка'
+  return fallback
 }
 
 export type { Profile }

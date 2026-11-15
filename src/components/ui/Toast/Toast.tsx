@@ -9,7 +9,8 @@ export type ToastTone = 'neutral' | 'success' | 'error' | 'warning'
 
 export interface ToastItem {
   id: string
-  message: string
+  title: string
+  description?: string
   tone: ToastTone
 }
 
@@ -23,12 +24,14 @@ export function ToastViewport({ items, onDismiss }: ToastViewportProps) {
     <div className={styles.viewport} aria-live="polite">
       {items.map((item) => (
         <div key={item.id} className={[styles.toast, styles[item.tone]].join(' ')} role="status">
-          <span className={styles.accent} aria-hidden />
-          <p className={styles.message}>{item.message}</p>
+          <div className={styles.body}>
+            <p className={styles.title}>{item.title}</p>
+            {item.description ? <p className={styles.description}>{item.description}</p> : null}
+          </div>
           <button
             type="button"
             className={styles.close}
-            aria-label="Закрыть"
+            aria-label="Close"
             onClick={() => onDismiss(item.id)}
           >
             <X size={14} />

@@ -2,73 +2,116 @@
  * ║ ain/DiagnosticProgress/DiagnosticProgress.module ║
  * ╚════════════════════════════════════════════════════╝ */
 
-.card {
+.hero {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-6);
+  align-items: center;
+  padding: var(--space-6);
+  border-radius: var(--radius-xl);
   background: var(--bg-surface);
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-lg);
-  padding: var(--space-5);
+}
+
+.heroLive {
+  border-color: var(--border-default);
+}
+
+.orbitWrap {
+  position: relative;
+  width: 148px;
+  height: 148px;
   display: grid;
-  gap: var(--space-5);
+  place-items: center;
+  flex-shrink: 0;
 }
 
-.header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-4);
+.orbitOuter,
+.orbitMid {
+  position: absolute;
+  border-radius: 50%;
+  border: 1px solid var(--border-subtle);
 }
 
-.title {
-  font-size: var(--text-lg);
+.orbitOuter {
+  inset: 0;
+}
+
+.orbitMid {
+  inset: 16px;
+  border-style: dashed;
+  opacity: 0.7;
+}
+
+.orbitFill {
+  position: absolute;
+  inset: 8px;
+  border-radius: 50%;
+  mask: radial-gradient(farthest-side, transparent calc(100% - 8px), #000 calc(100% - 7px));
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 8px), #000 calc(100% - 7px));
+  transition: background 0.35s var(--ease-out);
+}
+
+.orbitCore {
+  position: relative;
+  z-index: 1;
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  background: var(--bg-surface-secondary);
+  border: 1px solid var(--border-subtle);
+  display: grid;
+  place-content: center;
+  text-align: center;
+  gap: 2px;
+}
+
+.percent {
+  font-size: var(--text-xl);
   font-weight: var(--weight-semibold);
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
 }
 
-.phase {
-  margin-top: var(--space-2);
-  font-size: var(--text-md);
-  color: var(--text-secondary);
-}
-
-.demo {
-  display: inline-flex;
-  margin-top: var(--space-3);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-medium);
-  color: var(--text-secondary);
-  background: var(--bg-surface-secondary);
-  border-radius: var(--radius-sm);
-  padding: 4px 8px;
-}
-
-.stats {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--space-3);
-}
-
-.stat {
-  padding: var(--space-3);
-  border-radius: var(--radius-md);
-  background: var(--bg-surface-secondary);
-}
-
-.statLabel {
-  font-size: var(--text-xs);
+.percentLabel {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
   color: var(--text-tertiary);
 }
 
-.statValue {
-  margin-top: 4px;
-  font-size: var(--text-xl);
+.pulseDot {
+  position: absolute;
+  top: 10px;
+  right: 18px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--status-success);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--status-success) 40%, transparent);
+  animation: ping 1.6s var(--ease-out) infinite;
+}
+
+.copy {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.phase {
+  margin: 0;
+  font-size: var(--text-base);
   font-weight: var(--weight-semibold);
   letter-spacing: -0.02em;
-  font-variant-numeric: tabular-nums;
+  line-height: 1.35;
+  color: var(--text-primary);
 }
 
 .current {
   font-size: var(--text-sm);
   color: var(--text-secondary);
+  line-height: var(--leading-normal);
+  max-width: 46ch;
 }
 
 .current strong {
@@ -76,7 +119,75 @@
   font-weight: var(--weight-medium);
 }
 
+.demo {
+  width: fit-content;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  background: var(--bg-surface-secondary);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+}
+
+.meters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.meter {
+  display: grid;
+  gap: 2px;
+  min-width: 88px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: var(--bg-surface-secondary);
+}
+
+.meter span {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.meter strong {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
 .actions {
   display: flex;
   gap: var(--space-2);
+  padding-top: 2px;
+}
+
+@keyframes ping {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--status-success) 40%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 10px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@media (max-width: 720px) {
+  .hero {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    text-align: center;
+  }
+
+  .copy {
+    justify-items: center;
+  }
+
+  .meters {
+    justify-content: center;
+  }
+
+  .actions {
+    justify-content: center;
+  }
 }

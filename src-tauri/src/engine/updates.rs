@@ -106,6 +106,38 @@ impl UpdateManager {
         }
     }
 
+    /// First-run / repair: download Flowseal pack even if channel looks up-to-date.
+    pub fn ensure_engine_installed(
+        &self,
+        current: &EngineLayout,
+    ) -> AppResult<Option<EngineLayout>> {
+        let _ = crate::engine::pack::ensure_flowseal_sidecars(&current.root);
+        if current.is_installed() && crate::engine::pack::pack_payloads_present(&current.root) {
+            return Ok(None);
+        }
+
+        log::warn!(
+            "engine pack incomplete at {} — forcing Flowseal install",
+            current.root.display()
+        );
+
+        {
+            let mut channels = self.channels.lock().expect("updates lock");
+            if let Some(channel) = channels
+                .iter_mut()
+                .find(|c| c.id == UpdateChannelId::Engine)
+            {
+                channel.status = UpdateChannelStatus::Available;
+                if channel.current_version == "0.0.0" || channel.current_version == "unknown" {
+                    channel.latest_version = "pending".into();
+                }
+            }
+        }
+
+        let outcome = self.update_flowseal_pack(UpdateChannelId::Engine)?;
+        Ok(outcome.layout)
+    }
+
     /// Install every Available channel. Engine pack once; Application last.
     pub fn auto_install_available(&self) -> AppResult<Vec<UpdateOutcome>> {
         let pending: Vec<UpdateChannelId> = self
@@ -188,7 +220,14 @@ impl UpdateManager {
         fs::create_dir_all(&dest).map_err(|e| AppError::from(e.to_string()))?;
         extract_zip(&archive_path, &dest)?;
 
-        let layout_root = normalize_extracted_pack(&dest)?;
+        let nested = normalize_extracted_pack(&dest)?;
+        let layout_root = flatten_pack_to_version_dir(&dest, &nested)?;
+        crate::engine::pack::ensure_flowseal_sidecars(&layout_root)?;
+        if !crate::engine::pack::pack_payloads_present(&layout_root) {
+            return Err(AppError::from(
+                "Engine pack installed but bin/*.bin payloads are missing — re-download Engine",
+            ));
+        }
         let layout = EngineLayout::from_pack(layout_root);
         link_engine_current(&self.app_data, &layout.root)?;
 
@@ -274,7 +313,17 @@ impl UpdateManager {
             }
         }
 
-        launch_app_installer(&dest)?;
+        if let Err(err) = launch_app_installer(&dest) {
+            let mut channels = self.channels.lock().expect("updates lock");
+            if let Some(channel) = channels
+                .iter_mut()
+                .find(|c| c.id == UpdateChannelId::Application)
+            {
+                channel.status = UpdateChannelStatus::Available;
+                channel.download_progress = None;
+            }
+            return Err(err);
+        }
 
         let mut channels = self.channels.lock().expect("updates lock");
         let channel = channels
@@ -342,6 +391,49 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> AppResult<()> {
     Ok(())
 }
 
+/// Ask Windows for administrator rights. `Command::spawn` cannot do this and
+/// returns os error 740 for an installer marked requireAdministrator.
+#[cfg(windows)]
+fn launch_elevated(file: &Path, args: &[String]) -> AppResult<()> {
+    let quote = |s: &str| format!("'{}'", s.replace('\'', "''"));
+    let file_arg = quote(&file.to_string_lossy());
+    let arg_list = if args.is_empty() {
+        String::new()
+    } else {
+        let parts: Vec<String> = args.iter().map(|a| quote(a)).collect();
+        format!(" -ArgumentList @({})", parts.join(","))
+    };
+    let script = format!(
+        "$ErrorActionPreference='Stop'; try {{ Start-Process -FilePath {file_arg}{arg_list} -Verb RunAs; exit 0 }} catch {{ if ($_.Exception.Message -match 'canceled|cancelled|1223') {{ exit 1223 }}; Write-Error $_; exit 1 }}"
+    );
+
+    let output = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            &script,
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|e| AppError::from(format!("Failed to launch installer: {e}")))?;
+
+    let code = output.status.code().unwrap_or(1);
+    if code == 0 {
+        return Ok(());
+    }
+    if code == 1223 {
+        return Err(AppError::from(
+            "Installer was not started: the UAC prompt was declined.",
+        ));
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Err(AppError::from(format!(
+        "Failed to launch installer: {stderr}"
+    )))
+}
+
 fn launch_app_installer(path: &Path) -> AppResult<()> {
     let name = path
         .file_name()
@@ -352,18 +444,23 @@ fn launch_app_installer(path: &Path) -> AppResult<()> {
     #[cfg(windows)]
     {
         if name.ends_with(".msi") {
-            Command::new("msiexec")
-                .args(["/i", &path.to_string_lossy(), "/qb"])
-                .spawn()
-                .map_err(|e| AppError::from(format!("Failed to launch MSI: {e}")))?;
-            return Ok(());
+            let msiexec = std::env::var("SystemRoot")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from(r"C:\Windows"))
+                .join("System32")
+                .join("msiexec.exe");
+            return launch_elevated(
+                &msiexec,
+                &[
+                    "/i".into(),
+                    path.to_string_lossy().into_owned(),
+                    "/qb".into(),
+                ],
+            );
         }
 
         if name.ends_with(".exe") {
-            Command::new(path)
-                .spawn()
-                .map_err(|e| AppError::from(format!("Failed to launch installer: {e}")))?;
-            return Ok(());
+            return launch_elevated(path, &[]);
         }
 
         if name.ends_with(".zip") {
@@ -377,7 +474,7 @@ fn launch_app_installer(path: &Path) -> AppResult<()> {
             fs::create_dir_all(&staging).map_err(|e| AppError::from(e.to_string()))?;
             extract_zip(path, &staging)?;
 
-            let exe = find_file(&staging, "zapp.exe")
+            let _exe = find_file(&staging, "zapp.exe")
                 .ok_or_else(|| AppError::from("zapp.exe not found in release zip"))?;
             let current = std::env::current_exe()
                 .map_err(|e| AppError::from(e.to_string()))?;
@@ -401,12 +498,7 @@ fn launch_app_installer(path: &Path) -> AppResult<()> {
             );
             fs::write(&script, body).map_err(|e| AppError::from(e.to_string()))?;
 
-            let mut cmd = Command::new("cmd");
-            cmd.args(["/C", "start", "", &script.to_string_lossy()]);
-            cmd.creation_flags(CREATE_NO_WINDOW);
-            cmd.spawn()
-                .map_err(|e| AppError::from(format!("Failed to schedule zip update: {e}")))?;
-            return Ok(());
+            return launch_elevated(&script, &[]);
         }
     }
 
@@ -544,4 +636,50 @@ fn normalize_extracted_pack(dest: &Path) -> AppResult<PathBuf> {
     Err(AppError::from(
         "Extracted archive does not contain bin/winws.exe",
     ))
+}
+
+/// Move `engine/1.10.4/zapret-discord-youtube-1.10.4/*` → `engine/1.10.4/*`.
+fn flatten_pack_to_version_dir(dest: &Path, nested: &Path) -> AppResult<PathBuf> {
+    if nested == dest {
+        return Ok(dest.to_path_buf());
+    }
+
+    let entries: Vec<_> = fs::read_dir(nested)
+        .map_err(|e| AppError::from(e.to_string()))?
+        .flatten()
+        .map(|e| e.path())
+        .collect();
+
+    for entry in entries {
+        let name = entry
+            .file_name()
+            .ok_or_else(|| AppError::from("Invalid pack entry"))?;
+        let target = dest.join(name);
+        if target.exists() {
+            if target.is_dir() {
+                let _ = fs::remove_dir_all(&target);
+            } else {
+                let _ = fs::remove_file(&target);
+            }
+        }
+        if fs::rename(&entry, &target).is_err() {
+            if entry.is_dir() {
+                copy_dir_recursive(&entry, &target)?;
+                let _ = fs::remove_dir_all(&entry);
+            } else {
+                fs::copy(&entry, &target).map_err(|e| AppError::from(e.to_string()))?;
+                let _ = fs::remove_file(&entry);
+            }
+        }
+    }
+
+    let _ = fs::remove_dir_all(nested);
+
+    if !dest.join("bin").join("winws.exe").is_file() {
+        return Err(AppError::from(
+            "Flattened engine pack is missing bin/winws.exe",
+        ));
+    }
+
+    Ok(dest.to_path_buf())
 }
