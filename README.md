@@ -53,7 +53,6 @@ Things I’d tell a friend before they install:
 - First launch needs GitHub access to download the engine pack. There is no offline pack picker in the UI yet.
 - Closing the window hides to the tray by default; the process is still running. Quit from the tray before reinstalling, or the setup cannot replace `zapp.exe`.
 - Windows 10/11 x64 only. No macOS or Linux build.
-- If someone is still on a build older than 0.2.2, its auto-update could not request UAC (os error 740) — install the current `setup.exe` from Releases once by hand.
 
 ## If something doesn't work
 
