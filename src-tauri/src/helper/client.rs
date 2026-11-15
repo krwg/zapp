@@ -339,16 +339,8 @@ pub fn helper_stop(app_data: &Path) -> Result<(), EngineFault> {
     }
     let token = ensure_token(app_data)?;
     if !helper_auth_ok(&token).unwrap_or(false) {
-        let mut cmd = Command::new("taskkill");
-        cmd.args(["/IM", "winws.exe", "/F", "/T"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        #[cfg(windows)]
-        {
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
-        let _ = cmd.status();
+        // Helper unreachable — best-effort orphan cleanup only.
+        crate::engine::kill_orphan_winws();
         return Ok(());
     }
     let res = request(&HelperRequest::Stop { token })?;

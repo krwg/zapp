@@ -16,17 +16,20 @@ import styles from './DiagnosticsPage.module.css'
 export function DiagnosticsPage() {
   const {
     diagnosticsLive,
+    snapshot,
     startDiagnostics,
     cancelDiagnostics,
     selectDiagnosticStrategy,
+    updateSettings,
     busy,
   } = useAppState()
   const { t } = useLocale()
 
-  if (!diagnosticsLive) return null
+  if (!diagnosticsLive || !snapshot) return null
 
   const sorted = [...diagnosticsLive.results].sort((a, b) => b.score - a.score)
   const bestScore = sorted[0]?.score ?? 0
+  const mode = snapshot.settings.diagnosticsMode ?? 'fast'
 
   return (
     <div>
@@ -47,6 +50,8 @@ export function DiagnosticsPage() {
         <DiagnosticProgress
           run={diagnosticsLive}
           busy={busy.diagnostics}
+          mode={mode}
+          onModeChange={(next) => void updateSettings({ diagnosticsMode: next })}
           onStart={() => void startDiagnostics()}
           onCancel={() => void cancelDiagnostics()}
         />

@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "zapp",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "identifier": "app.zapp.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -41,7 +41,7 @@
     "licenseFile": "../LICENSE",
     "category": "Utility",
     "shortDescription": "Convenient zapret management",
-    "longDescription": "zapp brings zapret tools into one soft-minimal desktop client: protection control, smart mode checks, sites, and independent updates for App, Engine, and Strategies.",
+    "longDescription": "zapp brings zapret tools into one soft-minimal desktop client: DPI bypass control, smart mode checks, sites, and independent updates for App, Engine, and Strategies.",
     "windows": {
       "nsis": {
         "installMode": "both",

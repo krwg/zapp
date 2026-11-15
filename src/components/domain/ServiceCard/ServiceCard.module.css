@@ -20,6 +20,10 @@
   border-color: var(--border-strong);
 }
 
+.stale {
+  opacity: 0.62;
+}
+
 .header {
   display: flex;
   align-items: flex-start;

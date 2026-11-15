@@ -187,6 +187,15 @@ pub struct UpdateChannel {
     pub independent: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum DiagnosticsMode {
+    /// Stop at the first strategy that passes YouTube + Discord.
+    Fast,
+    /// Rank strategies; keep searching for a stronger score.
+    Thorough,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -197,6 +206,7 @@ pub struct AppSettings {
     pub auto_install_updates: bool,
     pub auto_diagnostics: bool,
     pub diagnostics_interval_hours: u32,
+    pub diagnostics_mode: DiagnosticsMode,
     pub network_timeout_ms: u32,
     pub network_retries: u32,
     pub advanced_logging: bool,
@@ -239,6 +249,7 @@ pub struct SettingsPatch {
     pub auto_install_updates: Option<bool>,
     pub auto_diagnostics: Option<bool>,
     pub diagnostics_interval_hours: Option<u32>,
+    pub diagnostics_mode: Option<DiagnosticsMode>,
     pub network_timeout_ms: Option<u32>,
     pub network_retries: Option<u32>,
     pub advanced_logging: Option<bool>,

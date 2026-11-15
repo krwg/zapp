@@ -6,12 +6,14 @@ import { CircleStop, Play, RotateCcw } from 'lucide-react'
 import { Button } from '@/components/ui/Button/Button'
 import { useLocale } from '@/context/LocaleContext'
 import type { MessageKey } from '@/i18n'
-import type { DiagnosticPhase, DiagnosticRun } from '@/types'
+import type { DiagnosticPhase, DiagnosticRun, DiagnosticsMode } from '@/types'
 import styles from './DiagnosticProgress.module.css'
 
 interface DiagnosticProgressProps {
   run: DiagnosticRun
   busy?: boolean
+  mode: DiagnosticsMode
+  onModeChange: (mode: DiagnosticsMode) => void
   onStart: () => void
   onCancel: () => void
 }
@@ -35,7 +37,14 @@ function phaseText(phase: DiagnosticPhase, t: (key: MessageKey) => string): stri
   }
 }
 
-export function DiagnosticProgress({ run, busy, onStart, onCancel }: DiagnosticProgressProps) {
+export function DiagnosticProgress({
+  run,
+  busy,
+  mode,
+  onModeChange,
+  onStart,
+  onCancel,
+}: DiagnosticProgressProps) {
   const { t } = useLocale()
   const running = run.phase === 'preparing' || run.phase === 'testing' || run.phase === 'analyzing'
   const progress = Math.max(0, Math.min(100, run.progress))
@@ -79,6 +88,30 @@ export function DiagnosticProgress({ run, busy, onStart, onCancel }: DiagnosticP
             <span>{t('smartCheck.working')}</span>
             <strong>{run.workingCount}</strong>
           </div>
+        </div>
+
+        <div
+          className={styles.modeSegment}
+          role="group"
+          aria-label={t('smartCheck.mode')}
+          title={t('smartCheck.modeHint')}
+        >
+          <button
+            type="button"
+            className={mode === 'fast' ? styles.modeActive : undefined}
+            disabled={running || busy}
+            onClick={() => onModeChange('fast')}
+          >
+            {t('smartCheck.modeFast')}
+          </button>
+          <button
+            type="button"
+            className={mode === 'thorough' ? styles.modeActive : undefined}
+            disabled={running || busy}
+            onClick={() => onModeChange('thorough')}
+          >
+            {t('smartCheck.modeThorough')}
+          </button>
         </div>
 
         <div className={styles.actions}>

@@ -34,6 +34,8 @@ interface SidebarProps {
   appVersion: string
   engineStatus: EngineStatus
   connection: ConnectionState
+  /** Hide the bypass chip on Home — the large card already shows status. */
+  hideStatus?: boolean
 }
 
 function statusLabel(status: EngineStatus, t: (key: MessageKey) => string): string {
@@ -58,7 +60,7 @@ function dotClass(status: EngineStatus): string {
   return ''
 }
 
-export function Sidebar({ appVersion, engineStatus, connection }: SidebarProps) {
+export function Sidebar({ appVersion, engineStatus, connection, hideStatus }: SidebarProps) {
   const { t, locale } = useLocale()
   const { showSidebarSession } = useUiPrefs()
   const [tick, setTick] = useState(() => Date.now())
@@ -108,22 +110,24 @@ export function Sidebar({ appVersion, engineStatus, connection }: SidebarProps) 
       </nav>
 
       <div className={styles.footer}>
-        <div
-          className={styles.statusChip}
-          role="status"
-          aria-label={`${t('nav.protection')}: ${statusLabel(engineStatus, t)}`}
-        >
-          <span className={[styles.dot, dotClass(engineStatus)].join(' ')} aria-hidden />
-          <div className={styles.statusText}>
-            <span className={styles.statusLabel}>{t('nav.protection')}</span>
-            <span className={styles.statusMain}>{statusLabel(engineStatus, t)}</span>
-            {showTime && (
-              <span className={styles.statusTime}>
-                {formatUptime(uptimeSeconds, { withSeconds: true, locale })}
-              </span>
-            )}
+        {!hideStatus && (
+          <div
+            className={styles.statusChip}
+            role="status"
+            aria-label={`${t('nav.protection')}: ${statusLabel(engineStatus, t)}`}
+          >
+            <span className={[styles.dot, dotClass(engineStatus)].join(' ')} aria-hidden />
+            <div className={styles.statusText}>
+              <span className={styles.statusLabel}>{t('nav.protection')}</span>
+              <span className={styles.statusMain}>{statusLabel(engineStatus, t)}</span>
+              {showTime && (
+                <span className={styles.statusTime}>
+                  {formatUptime(uptimeSeconds, { withSeconds: true, locale })}
+                </span>
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
         <NavLink
           to="/settings"

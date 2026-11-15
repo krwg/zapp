@@ -97,14 +97,14 @@ export function ConnectionCard({ connection, busy, onToggle, onReset }: Connecti
               {isOn ? t('home.tapToDisable') : t('home.tapToEnable')}
             </p>
 
-            <div className={styles.session}>
-              <span className={styles.sessionLabel}>{t('home.session')}</span>
-              <span className={styles.sessionValue}>
-                {connection.status === 'running'
-                  ? formatUptime(uptimeSeconds, { withSeconds: true, locale })
-                  : t('common.dash')}
-              </span>
-            </div>
+            {connection.status === 'running' && (
+              <div className={styles.session}>
+                <span className={styles.sessionLabel}>{t('home.session')}</span>
+                <span className={styles.sessionValue}>
+                  {formatUptime(uptimeSeconds, { withSeconds: true, locale })}
+                </span>
+              </div>
+            )}
           </div>
 
           {onReset && (

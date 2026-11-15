@@ -51,6 +51,21 @@
   color: var(--text-secondary);
 }
 
+.modeCta {
+  padding: 0 var(--space-5) var(--space-4);
+}
+
+.modeSummaryLine {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.siteStale {
+  opacity: 0.62;
+}
+
 .chevron {
   color: var(--text-tertiary);
   transition: transform var(--duration-fast) var(--ease-out);

@@ -487,11 +487,27 @@ fn launch_app_installer(path: &Path) -> AppResult<()> {
                 .parent()
                 .unwrap_or(Path::new("."))
                 .join("apply-zapp-update.cmd");
+            // Wait for this process to exit, stop winws (locks binaries), then copy.
+            // Do not taskkill zapp.exe from inside the app — the updater waits for exit.
             let body = format!(
                 "@echo off\r\n\
-                 timeout /t 2 /nobreak >nul\r\n\
-                 xcopy /y /e /i \"{src}\\*\" \"{dst}\\\"\r\n\
-                 start \"\" \"{dst}\\zapp.exe\"\r\n\
+                 setlocal\r\n\
+                 set \"DST={dst}\"\r\n\
+                 set \"SRC={src}\"\r\n\
+                 :wait_zapp\r\n\
+                 tasklist /FI \"IMAGENAME eq zapp.exe\" 2>nul | find /I \"zapp.exe\" >nul\r\n\
+                 if not errorlevel 1 (\r\n\
+                   timeout /t 1 /nobreak >nul\r\n\
+                   goto wait_zapp\r\n\
+                 )\r\n\
+                 taskkill /F /IM winws.exe >nul 2>&1\r\n\
+                 timeout /t 1 /nobreak >nul\r\n\
+                 xcopy /y /e /i \"%SRC%\\*\" \"%DST%\\\"\r\n\
+                 if errorlevel 1 (\r\n\
+                   echo zapp update: xcopy failed\r\n\
+                   exit /b 1\r\n\
+                 )\r\n\
+                 start \"\" \"%DST%\\zapp.exe\"\r\n\
                  del \"%~f0\"\r\n",
                 src = staging.display(),
                 dst = target_dir.display(),

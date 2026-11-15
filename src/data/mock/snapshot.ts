@@ -247,6 +247,7 @@ export const MOCK_SNAPSHOT: AppSnapshot = {
     autoCheckUpdates: true,
     autoInstallUpdates: false,
     autoDiagnostics: false,
+    diagnosticsMode: 'fast',
     diagnosticsIntervalHours: 24,
     networkTimeoutMs: 8000,
     networkRetries: 2,

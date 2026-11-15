@@ -118,6 +118,8 @@ export interface UpdateChannel {
   independent: true
 }
 
+export type DiagnosticsMode = 'fast' | 'thorough'
+
 export interface AppSettings {
   appearance: ThemeMode
   startWithSystem: boolean
@@ -126,6 +128,7 @@ export interface AppSettings {
   autoInstallUpdates: boolean
   autoDiagnostics: boolean
   diagnosticsIntervalHours: number
+  diagnosticsMode: DiagnosticsMode
   networkTimeoutMs: number
   networkRetries: number
   advancedLogging: boolean

@@ -4,6 +4,7 @@
 
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::time::Instant;
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -12,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use super::elevate::is_elevated;
 use super::faults::{EngineFault, FaultCode};
+use super::process::process_running;
 use super::strategy::parse_strategy_bat;
 
 #[cfg(windows)]
@@ -36,13 +38,70 @@ pub struct PreflightReport {
     pub blocking_fault: Option<EngineFault>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreflightScope {
+    /// Pack files, conflicts, WinDivert service, elevation.
+    Environment,
+    /// Strategy .bat parse + payload paths only (cheap; safe per strategy).
+    Strategy,
+    /// Both (UI / normal Start).
+    Full,
+}
+
 pub fn run_preflight(root: &Path, strategy: &str) -> PreflightReport {
+    run_preflight_scoped(root, strategy, PreflightScope::Full)
+}
+
+pub fn run_preflight_scoped(root: &Path, strategy: &str, scope: PreflightScope) -> PreflightReport {
+    let t0 = Instant::now();
     let mut checks = Vec::new();
 
-    // Flowseal BATs reference *-user.txt lists created by service.bat.
-    // Helper/winws path never runs that — create stubs before payload checks.
-    let _ = super::pack::ensure_flowseal_sidecars(root);
+    if matches!(scope, PreflightScope::Environment | PreflightScope::Full) {
+        // Flowseal BATs reference *-user.txt lists created by service.bat.
+        let _ = super::pack::ensure_flowseal_sidecars(root);
+        push_pack_checks(root, &mut checks);
+        // Foreign winws only on Environment-only (diagnostics after stop). Full Start may
+        // still own a live winws while switching strategies.
+        let foreign_winws = matches!(scope, PreflightScope::Environment);
+        push_conflict_checks(&mut checks, foreign_winws);
+        push_windivert_service(&mut checks);
+        push_elevation(&mut checks);
+    }
 
+    if matches!(scope, PreflightScope::Strategy | PreflightScope::Full) {
+        if matches!(scope, PreflightScope::Strategy) {
+            // Sidecars once per process is enough; cheap no-op if already present.
+            let _ = super::pack::ensure_flowseal_sidecars(root);
+        }
+        push_strategy_checks(root, strategy, &mut checks);
+    }
+
+    let elevated = is_elevated();
+    let blocking = checks
+        .iter()
+        .find(|c| !c.ok && c.fault_code.is_some())
+        .map(|c| {
+            EngineFault::new(
+                c.fault_code.clone().unwrap_or(FaultCode::Unknown),
+                c.detail.clone(),
+            )
+        });
+
+    let report = PreflightReport {
+        ok: blocking.is_none(),
+        elevated,
+        checks,
+        blocking_fault: blocking,
+    };
+    log::info!(
+        "timing preflight({scope:?}, '{strategy}'): {:.0}ms ok={}",
+        t0.elapsed().as_secs_f64() * 1000.0,
+        report.ok
+    );
+    report
+}
+
+fn push_pack_checks(root: &Path, checks: &mut Vec<PreflightCheck>) {
     let winws = root.join("bin").join("winws.exe");
     let winws_ok = winws.is_file();
     checks.push(PreflightCheck {
@@ -67,15 +126,13 @@ pub fn run_preflight(root: &Path, strategy: &str) -> PreflightReport {
         detail: if divert_ok {
             "WinDivert64.sys + WinDivert.dll present".into()
         } else {
-            format!(
-                "sys={} dll={}",
-                sys.is_file(),
-                dll.is_file()
-            )
+            format!("sys={} dll={}", sys.is_file(), dll.is_file())
         },
         fault_code: (!divert_ok).then_some(FaultCode::WinDivertDriverMissing),
     });
+}
 
+fn push_strategy_checks(root: &Path, strategy: &str, checks: &mut Vec<PreflightCheck>) {
     let bat = root.join(format!("{strategy}.bat"));
     let bat_ok = bat.is_file();
     checks.push(PreflightCheck {
@@ -132,27 +189,37 @@ pub fn run_preflight(root: &Path, strategy: &str) -> PreflightReport {
         detail: payload_detail,
         fault_code: (!payload_ok).then_some(FaultCode::StrategyPayloadMissing),
     });
+}
 
-    let conflict = detect_conflicting_bypass();
+fn push_conflict_checks(checks: &mut Vec<PreflightCheck>, foreign_winws: bool) {
+    let conflict = detect_conflicting_bypass(foreign_winws);
     checks.push(PreflightCheck {
         id: "conflict".into(),
         label: "No conflicting bypass tools".into(),
         ok: conflict.is_none(),
-        detail: conflict
-            .clone()
-            .unwrap_or_else(|| "No GoodbyeDPI / foreign zapret GUI detected".into()),
+        detail: conflict.clone().unwrap_or_else(|| {
+            if foreign_winws {
+                "No GoodbyeDPI / foreign winws / zapret GUI detected".into()
+            } else {
+                "No GoodbyeDPI / foreign zapret GUI detected".into()
+            }
+        }),
         fault_code: conflict.is_some().then_some(FaultCode::ConflictingBypass),
     });
+}
 
+fn push_windivert_service(checks: &mut Vec<PreflightCheck>) {
     let windivert_svc = windivert_service_state();
     checks.push(PreflightCheck {
         id: "windivert-svc".into(),
         label: "WinDivert service state".into(),
-        ok: true, 
+        ok: true,
         detail: windivert_svc,
         fault_code: None,
     });
+}
 
+fn push_elevation(checks: &mut Vec<PreflightCheck>) {
     let elevated = is_elevated();
     checks.push(PreflightCheck {
         id: "elevation".into(),
@@ -165,23 +232,6 @@ pub fn run_preflight(root: &Path, strategy: &str) -> PreflightReport {
         },
         fault_code: None,
     });
-
-    let blocking = checks
-        .iter()
-        .find(|c| !c.ok && c.fault_code.is_some())
-        .map(|c| {
-            EngineFault::new(
-                c.fault_code.clone().unwrap_or(FaultCode::Unknown),
-                c.detail.clone(),
-            )
-        });
-
-    PreflightReport {
-        ok: blocking.is_none(),
-        elevated,
-        checks,
-        blocking_fault: blocking,
-    }
 }
 
 fn extract_path_arg(arg: &str) -> Option<String> {
@@ -208,7 +258,7 @@ fn extract_path_arg(arg: &str) -> Option<String> {
     None
 }
 
-fn detect_conflicting_bypass() -> Option<String> {
+fn detect_conflicting_bypass(foreign_winws: bool) -> Option<String> {
     let names = [
         "goodbyedpi.exe",
         "zapret_gui.exe",
@@ -217,22 +267,16 @@ fn detect_conflicting_bypass() -> Option<String> {
     ];
     for name in names {
         if process_running(name) {
-            return Some(format!("{name} is running"));
+            return Some(format!("{name} is running — stop it before using zapp"));
         }
     }
+    if foreign_winws && process_running("winws.exe") {
+        return Some(
+            "Another winws.exe is still running (Flowseal .bat or Windows service). Stop it, then retry Smart check."
+                .into(),
+        );
+    }
     None
-}
-
-fn process_running(image: &str) -> bool {
-    hidden("tasklist")
-        .args(["/FI", &format!("IMAGENAME eq {image}"), "/NH"])
-        .output()
-        .map(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .to_ascii_lowercase()
-                .contains(&image.to_ascii_lowercase())
-        })
-        .unwrap_or(false)
 }
 
 fn windivert_service_state() -> String {

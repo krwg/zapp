@@ -9,6 +9,7 @@
 
 [English](README.md) · [Русский](README.ru.md) · [Релизы](https://github.com/krwg/zapp/releases)
 
+<!-- Скриншоты ещё со старым UI («Защита»); переснять перед следующим релизом на GitHub. -->
 <img src="docs/screenshots/01-overview.png" alt="zapp, главная" width="860" />
 
 </div>

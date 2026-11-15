@@ -36,7 +36,7 @@ interface AppStateContextValue {
   selectDiagnosticStrategy: (resultId: string) => Promise<void>
   diagnosticsLive: DiagnosticRun | null
   checkService: (id: string) => Promise<void>
-  checkAllServices: () => Promise<void>
+  checkAllServices: (opts?: { silent?: boolean }) => Promise<void>
   checkUpdates: () => Promise<void>
   updateChannel: (id: UpdateChannel['id']) => Promise<void>
   updatesLive: UpdateChannel[]
@@ -206,10 +206,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     await withBusy('diagnostics', async () => {
       const run = await api.startDiagnostics()
       setDiagnosticsLive(run)
+      const queued = (run.currentStrategy ?? '').toLowerCase().includes('busy')
       push({
-        title: t('toast.checkStartedTitle'),
-        description: t('toast.checkStartedDesc'),
-        tone: 'neutral',
+        title: queued ? t('toast.checkQueuedTitle') : t('toast.checkStartedTitle'),
+        description: queued ? t('toast.checkQueuedDesc') : t('toast.checkStartedDesc'),
+        tone: queued ? 'warning' : 'neutral',
       })
     })
   }, [api, push, t, withBusy])
@@ -271,17 +272,22 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [api, push, t, withBusy],
   )
 
-  const checkAllServices = useCallback(async () => {
-    await withBusy('services:all', async () => {
-      const list: MonitoredService[] = await api.checkAllServices()
-      setSnapshot((prev) => (prev ? { ...prev, services: list } : prev))
-      push({
-        title: t('toast.sitesCheckedTitle'),
-        description: t('toast.sitesCheckedDesc'),
-        tone: 'success',
+  const checkAllServices = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      await withBusy('services:all', async () => {
+        const list: MonitoredService[] = await api.checkAllServices()
+        setSnapshot((prev) => (prev ? { ...prev, services: list } : prev))
+        if (!opts?.silent) {
+          push({
+            title: t('toast.sitesCheckedTitle'),
+            description: t('toast.sitesCheckedDesc'),
+            tone: 'success',
+          })
+        }
       })
-    })
-  }, [api, push, t, withBusy])
+    },
+    [api, push, t, withBusy],
+  )
 
   const checkUpdates = useCallback(async () => {
     await withBusy('updates:check', async () => {

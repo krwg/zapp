@@ -4,14 +4,15 @@
 
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
 use crate::engine::elevate;
 use crate::engine::faults::{EngineFault, FaultCode};
-use crate::engine::preflight::run_preflight;
+use crate::engine::preflight::{run_preflight_scoped, PreflightScope};
+use crate::engine::process::{kill_orphan_winws, process_running};
 use crate::engine::strategy::parse_strategy_bat;
 use crate::error::{AppError, AppResult};
 use crate::model::EngineStatus;
@@ -81,8 +82,17 @@ pub struct ManagedEngine {
     inner: Mutex<EngineInner>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct StartOpts {
+    pub allow_elevate: bool,
+    /// Environment preflight (conflicts / WinDivert service). Skip during diag strategy loop.
+    pub env_preflight: bool,
+}
+
 impl ManagedEngine {
     pub fn new(app_data: std::path::PathBuf, layout: EngineLayout) -> Self {
+        // Orphan cleanup only at process start — not on every Start.
+        kill_orphan_winws();
         Self {
             app_data,
             inner: Mutex::new(EngineInner {
@@ -105,6 +115,21 @@ impl ManagedEngine {
 
     pub fn status(&self) -> EngineStatus {
         self.inner.lock().expect("engine lock").status.clone()
+    }
+
+    /// Whether our managed winws child (local or via helper) is still alive.
+    pub fn winws_alive(&self) -> bool {
+        let via_helper = {
+            let inner = self.inner.lock().expect("engine lock");
+            inner.via_helper
+        };
+        if via_helper {
+            return crate::helper::helper_status(&self.app_data)
+                .map(|st| st.running)
+                .unwrap_or(false);
+        }
+        let mut inner = self.inner.lock().expect("engine lock");
+        child_alive(&mut inner.child)
     }
 
     pub fn layout(&self) -> EngineLayout {
@@ -155,20 +180,42 @@ impl ManagedEngine {
     }
 
     pub fn start(&self, strategy_override: Option<&str>) -> AppResult<EngineStatus> {
-        self.start_inner(strategy_override, true)
+        self.start_inner(
+            strategy_override,
+            StartOpts {
+                allow_elevate: true,
+                env_preflight: true,
+            },
+        )
     }
 
     pub fn start_no_elevate(&self, strategy_override: Option<&str>) -> AppResult<EngineStatus> {
-        self.start_inner(strategy_override, false)
+        self.start_inner(
+            strategy_override,
+            StartOpts {
+                allow_elevate: false,
+                env_preflight: true,
+            },
+        )
+    }
+
+    /// Diagnostics strategy loop: strategy-only preflight, no orphan taskkill.
+    pub fn start_diag(&self, strategy_override: Option<&str>) -> AppResult<EngineStatus> {
+        self.start_inner(
+            strategy_override,
+            StartOpts {
+                allow_elevate: false,
+                env_preflight: false,
+            },
+        )
     }
 
     fn start_inner(
         &self,
         strategy_override: Option<&str>,
-        allow_elevate: bool,
+        opts: StartOpts,
     ) -> AppResult<EngineStatus> {
-        
-        let _ = self.kill_winws_processes();
+        let t_all = Instant::now();
 
         let mut inner = self.inner.lock().expect("engine lock");
         inner.status = EngineStatus::Starting;
@@ -191,7 +238,17 @@ impl ManagedEngine {
             .or_else(|| inner.active_strategy.clone())
             .unwrap_or_else(|| "general (FAKE TLS AUTO)".into());
 
-        let report = run_preflight(&inner.layout.root, &strategy);
+        let scope = if opts.env_preflight {
+            PreflightScope::Full
+        } else {
+            PreflightScope::Strategy
+        };
+        let t_pf = Instant::now();
+        let report = run_preflight_scoped(&inner.layout.root, &strategy, scope);
+        log::info!(
+            "timing start_inner.preflight: {:.0}ms",
+            t_pf.elapsed().as_secs_f64() * 1000.0
+        );
         if let Some(fault) = report.blocking_fault {
             log::warn!("preflight blocked start: {}", fault.message());
             inner.status = EngineStatus::Error;
@@ -216,7 +273,7 @@ impl ManagedEngine {
         );
 
         let already_elevated = elevate::is_elevated();
-        if !already_elevated && !allow_elevate {
+        if !already_elevated && !opts.allow_elevate {
             if crate::helper::helper_ping(&self.app_data).is_err() {
                 let fault = EngineFault::new(
                     FaultCode::DiagnosticsNeedsAdmin,
@@ -234,6 +291,7 @@ impl ManagedEngine {
         let args = launch.args.clone();
         drop(inner);
 
+        let t_spawn = Instant::now();
         let (start_res, via_helper) = if already_elevated {
             let mut cmd = Command::new(&winws);
             cmd.args(&args)
@@ -246,12 +304,32 @@ impl ManagedEngine {
                 cmd.creation_flags(CREATE_NO_WINDOW);
             }
             match cmd.spawn() {
-                Ok(child) => {
-                    let pid = child.id();
-                    let mut inner = self.inner.lock().expect("engine lock");
-                    inner.child = Some(child);
-                    inner.child_pid = Some(pid);
-                    (Ok(Some(pid)), false)
+                Ok(mut child) => {
+                    // Bad args / driver fail show up quickly — poll instead of fixed sleeps.
+                    let deadline = Instant::now() + Duration::from_millis(250);
+                    let mut alive = true;
+                    while Instant::now() < deadline {
+                        if let Ok(Some(_)) = child.try_wait() {
+                            alive = false;
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(15));
+                    }
+                    if !alive {
+                        (
+                            Err(EngineFault::new(
+                                FaultCode::WinwsExitedImmediately,
+                                "winws exited immediately after spawn",
+                            )),
+                            false,
+                        )
+                    } else {
+                        let pid = child.id();
+                        let mut inner = self.inner.lock().expect("engine lock");
+                        inner.child = Some(child);
+                        inner.child_pid = Some(pid);
+                        (Ok(Some(pid)), false)
+                    }
                 }
                 Err(e) => (
                     Err(EngineFault::new(
@@ -268,6 +346,10 @@ impl ManagedEngine {
                 true,
             )
         };
+        log::info!(
+            "timing start_inner.spawn/helper: {:.0}ms via_helper={via_helper}",
+            t_spawn.elapsed().as_secs_f64() * 1000.0
+        );
 
         let mut inner = self.inner.lock().expect("engine lock");
         inner.active_strategy = Some(strategy.clone());
@@ -275,20 +357,15 @@ impl ManagedEngine {
 
         match start_res {
             Ok(pid) => {
-                let mut alive = winws_running() || child_alive(&mut inner.child);
-                if !alive {
-                    for _ in 0..12 {
-                        std::thread::sleep(Duration::from_millis(150));
-                        alive = winws_running() || child_alive(&mut inner.child);
-                        if alive {
-                            break;
-                        }
+                let mut alive = child_alive(&mut inner.child);
+                if !alive && via_helper {
+                    if let Ok(st) = crate::helper::helper_status(&app_data) {
+                        alive = st.running;
                     }
                 }
-                
+
                 if alive || via_helper {
                     if via_helper && !alive {
-                        
                         if let Ok(st) = crate::helper::helper_status(&app_data) {
                             if !st.running {
                                 let fault = EngineFault::new(
@@ -312,9 +389,10 @@ impl ManagedEngine {
                     }
                     inner.last_error = None;
                     log::info!(
-                        "zapp started winws strategy='{strategy}' via_helper={via_helper} pid={:?} pack={}",
+                        "zapp started winws strategy='{strategy}' via_helper={via_helper} pid={:?} pack={} total={:.0}ms",
                         pid,
-                        inner.layout.version
+                        inner.layout.version,
+                        t_all.elapsed().as_secs_f64() * 1000.0
                     );
                     Ok(inner.status.clone())
                 } else {
@@ -342,6 +420,7 @@ impl ManagedEngine {
     }
 
     pub fn stop(&self) -> AppResult<EngineStatus> {
+        let t0 = Instant::now();
         let mut inner = self.inner.lock().expect("engine lock");
         inner.status = EngineStatus::Stopping;
 
@@ -350,24 +429,29 @@ impl ManagedEngine {
             let _ = child.wait();
         }
         inner.child_pid = None;
+        let via_helper = inner.via_helper;
         inner.via_helper = false;
         drop(inner);
 
-        let _ = crate::helper::helper_stop(&self.app_data);
-        let _ = self.kill_winws_processes();
+        if via_helper {
+            let _ = crate::helper::helper_stop(&self.app_data);
+        }
 
         let mut inner = self.inner.lock().expect("engine lock");
         inner.status = EngineStatus::Stopped;
         inner.session_started_at = None;
         inner.uptime_anchor_secs = None;
         inner.last_error = None;
-        log::info!("zapp stopped winws");
+        log::info!(
+            "zapp stopped winws ({:.0}ms)",
+            t0.elapsed().as_secs_f64() * 1000.0
+        );
         Ok(EngineStatus::Stopped)
     }
 
     pub fn reset(&self) -> AppResult<EngineStatus> {
         let _ = crate::helper::helper_reset(&self.app_data);
-        let _ = self.kill_winws_processes();
+        kill_orphan_winws();
         let mut inner = self.inner.lock().expect("engine lock");
         inner.status = EngineStatus::Stopped;
         inner.session_started_at = None;
@@ -377,17 +461,6 @@ impl ManagedEngine {
         inner.via_helper = false;
         inner.last_error = None;
         Ok(EngineStatus::Stopped)
-    }
-
-    fn kill_winws_processes(&self) -> AppResult<()> {
-        let _ = hidden_command("taskkill")
-            .args(["/IM", "winws.exe", "/F", "/T"])
-            .status();
-        let _ = hidden_command("taskkill")
-            .args(["/FI", "WINDOWTITLE eq zapret:*", "/F"])
-            .status();
-        std::thread::sleep(Duration::from_millis(120));
-        Ok(())
     }
 
     pub fn adopt_layout(&self, layout: EngineLayout) -> AppResult<()> {
@@ -420,13 +493,13 @@ impl ManagedEngine {
         let alive = if via_helper {
             match crate::helper::helper_status(&app_data) {
                 Ok(st) => st.running,
-                Err(_) => winws_running(),
+                Err(_) => process_running("winws.exe"),
             }
         } else {
             let mut inner = self.inner.lock().expect("engine lock");
             let local = child_alive(&mut inner.child);
             drop(inner);
-            local || winws_running()
+            local || process_running("winws.exe")
         };
 
         let mut inner = self.inner.lock().expect("engine lock");
@@ -457,27 +530,4 @@ fn child_alive(child: &mut Option<Child>) -> bool {
         Some(c) => matches!(c.try_wait(), Ok(None)),
         None => false,
     }
-}
-
-fn winws_running() -> bool {
-    hidden_command("tasklist")
-        .args(["/FI", "IMAGENAME eq winws.exe", "/NH"])
-        .output()
-        .map(|out| {
-            let text = String::from_utf8_lossy(&out.stdout).to_ascii_lowercase();
-            text.contains("winws.exe")
-        })
-        .unwrap_or(false)
-}
-
-fn hidden_command(program: &str) -> Command {
-    let mut cmd = Command::new(program);
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    #[cfg(windows)]
-    {
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-    cmd
 }

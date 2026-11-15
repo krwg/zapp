@@ -30,6 +30,7 @@ export function AppShell() {
         appVersion={snapshot.about.version}
         engineStatus={snapshot.connection.status}
         connection={snapshot.connection}
+        hideStatus={location.pathname === '/'}
       />
       <main className={styles.main}>
         <div className={styles.content}>

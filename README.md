@@ -14,6 +14,7 @@ Run a DPI-bypass strategy for YouTube and Discord without a console window.
 
 [English](README.md) · [Русский](README.ru.md) · [Releases](https://github.com/krwg/zapp/releases)
 
+<!-- Screenshots still show pre-0.2.4 UI ("Protection"); reshoot before the next GitHub release. -->
 <img src="docs/screenshots/01-overview.png" alt="zapp Home" width="860" />
 
 </div>

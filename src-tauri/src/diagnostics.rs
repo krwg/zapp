@@ -4,57 +4,136 @@
 
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::engine::{
-    diag_targets, probe_targets_parallel, rank_score, score_by_service, strategy_prior_bonus,
+    diag_targets, kill_orphan_winws, probe_resolved_parallel, rank_score, resolve_diag_targets,
+    run_preflight_scoped, score_by_service, strategy_prior_bonus, PreflightScope,
 };
 use crate::model::*;
-use crate::state::AppState;
+use crate::state::{AppState, Store};
 use crate::util::{new_id, now_iso};
 
 const PASS_THRESHOLD: u32 = 55;
 
-pub fn run_diagnostics_worker(app: AppHandle, cancel: Arc<Mutex<bool>>) {
+struct Snapshot {
+    was_running: bool,
+    previous: Option<String>,
+}
+
+fn cancelled(cancel: &Arc<Mutex<bool>>) -> bool {
+    *cancel.lock().expect("flag")
+}
+
+fn superseded(state: &AppState, run_id: &str) -> bool {
+    state.inner.lock().expect("state lock").diagnostics.id != run_id
+}
+
+fn alive(state: &AppState, run_id: &str, cancel: &Arc<Mutex<bool>>) -> bool {
+    !cancelled(cancel) && !superseded(state, run_id)
+}
+
+fn mutate_if_alive(
+    state: &AppState,
+    run_id: &str,
+    cancel: &Arc<Mutex<bool>>,
+    f: impl FnOnce(&mut Store),
+) -> bool {
+    if cancelled(cancel) {
+        return false;
+    }
+    let mut store = state.inner.lock().expect("state lock");
+    if store.diagnostics.id != run_id || cancelled(cancel) {
+        return false;
+    }
+    f(&mut store);
+    true
+}
+
+/// Exit path when this run is no longer active: cancel → restore; superseded → silent stop.
+fn bail(
+    app: &AppHandle,
+    state: &AppState,
+    run_id: &str,
+    cancel: &Arc<Mutex<bool>>,
+    snapshot: &Snapshot,
+) {
+    let _ = state.engine.stop();
+    if superseded(state, run_id) {
+        return;
+    }
+    if !cancelled(cancel) {
+        return;
+    }
+    restore_previous(state, snapshot);
+    {
+        let mut store = state.inner.lock().expect("state lock");
+        if store.diagnostics.id != run_id {
+            return;
+        }
+        store.diagnostics.phase = DiagnosticPhase::Cancelled;
+        store.diagnostics.current_strategy = None;
+        store.diagnostics.finished_at = Some(now_iso());
+    }
+    state.history.push("diagnostics", "Diagnostics cancelled");
+    let _ = app.emit("diagnostics:completed", ());
+}
+
+pub fn run_diagnostics_worker(
+    app: AppHandle,
+    run_id: String,
+    cancel: Arc<Mutex<bool>>,
+    prefer_previous: bool,
+) {
     let Some(state) = app.try_state::<AppState>() else {
         return;
     };
 
+    let snapshot = Snapshot {
+        was_running: matches!(state.engine.status(), EngineStatus::Running),
+        previous: state.engine.active_strategy(),
+    };
+
     if let Err(e) = crate::helper::ensure_helper(state.engine.app_data()) {
-        let mut store = state.inner.lock().expect("state lock");
-        store.diagnostics.phase = DiagnosticPhase::Failed;
-        store.diagnostics.current_strategy = None;
-        store.diagnostics.finished_at = Some(now_iso());
-        store.diagnostics.is_demo = false;
-        state.history.push("diagnostics", e.message());
-        let _ = app.emit("diagnostics:completed", ());
+        fail_run(&app, &state, &run_id, &cancel, &snapshot, e.message());
         return;
     }
 
-    let profiles: Vec<(String, String, String)> = {
+    if !alive(&state, &run_id, &cancel) {
+        bail(&app, &state, &run_id, &cancel, &snapshot);
+        return;
+    }
+
+    let (profiles_raw, mode) = {
         let store = state.inner.lock().expect("state lock");
-        store
+        let profiles: Vec<(String, String, String)> = store
             .profiles
             .iter()
             .map(|p| (p.id.clone(), p.name.clone(), p.strategy_type.clone()))
-            .collect()
+            .collect();
+        (profiles, store.settings.diagnostics_mode.clone())
     };
 
-    let mut profiles = profiles;
+    let mut profiles = profiles_raw;
+    // Manual Smart check uses normal ranking. Prefer-previous is only for background re-check:
+    // otherwise Fast mode re-selects the current (often UDP-broken) strategy and changes nothing.
     profiles.sort_by(|a, b| {
-        strategy_prior_bonus(&b.1)
-            .cmp(&strategy_prior_bonus(&a.1))
+        let prev_ord = if prefer_previous {
+            let a_prev = snapshot.previous.as_deref() == Some(a.1.as_str());
+            let b_prev = snapshot.previous.as_deref() == Some(b.1.as_str());
+            b_prev.cmp(&a_prev)
+        } else {
+            std::cmp::Ordering::Equal
+        };
+        prev_ord
+            .then(strategy_prior_bonus(&b.1).cmp(&strategy_prior_bonus(&a.1)))
             .then(a.1.cmp(&b.1))
     });
-
     let total = profiles.len() as u32;
-    let was_running = matches!(state.engine.status(), EngineStatus::Running);
-    let previous = state.engine.active_strategy();
 
-    {
-        let mut store = state.inner.lock().expect("state lock");
+    if !mutate_if_alive(&state, &run_id, &cancel, |store| {
         store.diagnostics.phase = DiagnosticPhase::Preparing;
         store.diagnostics.total_count = total;
         store.diagnostics.tested_count = 0;
@@ -63,19 +142,60 @@ pub fn run_diagnostics_worker(app: AppHandle, cancel: Arc<Mutex<bool>>) {
         store.diagnostics.is_demo = false;
         store.diagnostics.current_strategy = Some("Preparing helper…".into());
         store.diagnostics.progress = 2;
+    }) {
+        bail(&app, &state, &run_id, &cancel, &snapshot);
+        return;
     }
     let _ = app.emit("diagnostics:progress", ());
-    state
-        .history
-        .push("diagnostics", "Started adaptive profile diagnostics");
+    state.history.push(
+        "diagnostics",
+        format!(
+            "Started adaptive diagnostics ({})",
+            match mode {
+                DiagnosticsMode::Fast => "fast",
+                DiagnosticsMode::Thorough => "thorough",
+            }
+        ),
+    );
 
     let _ = state.engine.set_running(false);
-    thread::sleep(Duration::from_millis(80));
+
+    // Our orphaned winws from a previous helper session must not look like Flowseal.
+    // Clean orphans first, then env-preflight treats any leftover winws as foreign.
+    kill_orphan_winws();
+    thread::sleep(Duration::from_millis(60));
 
     {
-        let mut store = state.inner.lock().expect("state lock");
+        let layout = state.engine.layout();
+        let sample = profiles
+            .first()
+            .map(|(_, n, _)| n.as_str())
+            .unwrap_or("general (FAKE TLS AUTO)");
+        let env = run_preflight_scoped(&layout.root, sample, PreflightScope::Environment);
+        if let Some(fault) = env.blocking_fault {
+            fail_run(
+                &app,
+                &state,
+                &run_id,
+                &cancel,
+                &snapshot,
+                fault.message(),
+            );
+            return;
+        }
+    }
+
+    if !alive(&state, &run_id, &cancel) {
+        bail(&app, &state, &run_id, &cancel, &snapshot);
+        return;
+    }
+
+    if !mutate_if_alive(&state, &run_id, &cancel, |store| {
         store.diagnostics.phase = DiagnosticPhase::Testing;
         store.diagnostics.current_strategy = Some("Testing strategies…".into());
+    }) {
+        bail(&app, &state, &run_id, &cancel, &snapshot);
+        return;
     }
     let _ = app.emit("diagnostics:progress", ());
 
@@ -83,53 +203,98 @@ pub fn run_diagnostics_worker(app: AppHandle, cancel: Arc<Mutex<bool>>) {
         let store = state.inner.lock().expect("state lock");
         Duration::from_millis(store.settings.network_timeout_ms.max(900) as u64)
     };
-
     let targets = diag_targets();
+    let resolved = resolve_diag_targets(&targets);
+    let dns_ok = resolved.iter().any(|r| !r.addrs.is_empty());
+    if !dns_ok {
+        fail_run(
+            &app,
+            &state,
+            &run_id,
+            &cancel,
+            &snapshot,
+            "No network: DNS failed for all probe hosts",
+        );
+        return;
+    }
     let mut best: Option<(String, u32)> = None;
     let mut tested = 0u32;
 
     for (index, (profile_id, name, strategy_type)) in profiles.into_iter().enumerate() {
-        if *cancel.lock().expect("flag") {
-            finalize_cancelled(&app, &state);
-            restore_previous(&state, was_running, previous.as_deref());
+        let t_strategy = Instant::now();
+        if !alive(&state, &run_id, &cancel) {
+            bail(&app, &state, &run_id, &cancel, &snapshot);
             return;
         }
 
-        // Early stop only when every critical service already passes strongly.
-        // Prevents locking onto a YouTube-only winner while Discord is still broken.
-        if let Some((_, best_score)) = &best {
-            let remaining_exp_only = name.to_ascii_lowercase().contains("exp");
-            if *best_score >= 92 && tested >= 3 && remaining_exp_only {
-                break;
-            }
-            if *best_score >= 96 && tested >= 5 {
-                break;
+        if matches!(mode, DiagnosticsMode::Thorough) {
+            if let Some((_, best_score)) = &best {
+                let remaining_exp_only = name.to_ascii_lowercase().contains("exp");
+                if *best_score >= 92 && tested >= 3 && remaining_exp_only {
+                    break;
+                }
+                if *best_score >= 96 && tested >= 5 {
+                    break;
+                }
             }
         }
 
-        {
-            let mut store = state.inner.lock().expect("state lock");
+        if !mutate_if_alive(&state, &run_id, &cancel, |store| {
             store.diagnostics.current_strategy = Some(name.clone());
             store.diagnostics.progress =
                 (((index as u32) * 90) / total.max(1)).saturating_add(5);
+        }) {
+            bail(&app, &state, &run_id, &cancel, &snapshot);
+            return;
         }
         let _ = app.emit("diagnostics:progress", ());
 
-        let start_res = state.engine.start_no_elevate(Some(&name));
-        // Give WinDivert filters a moment to attach before probing.
-        thread::sleep(Duration::from_millis(200));
+        let t_start = Instant::now();
+        let start_res = state.engine.start_diag(Some(&name));
+        log::info!(
+            "timing diag.start('{name}'): {:.0}ms ok={}",
+            t_start.elapsed().as_secs_f64() * 1000.0,
+            start_res.is_ok()
+        );
+
+        if !alive(&state, &run_id, &cancel) {
+            let _ = state.engine.stop();
+            bail(&app, &state, &run_id, &cancel, &snapshot);
+            return;
+        }
 
         let host_results = if start_res.is_ok() {
+            // Short settle so WinDivert filters attach before probes.
+            thread::sleep(Duration::from_millis(150));
             let budget = timeout.min(Duration::from_millis(1100));
-            probe_targets_parallel(&targets, budget)
+            let t_probe = Instant::now();
+            let results = probe_resolved_parallel(&resolved, budget, Some(cancel.clone()));
+            log::info!(
+                "timing diag.probe('{name}'): {:.0}ms",
+                t_probe.elapsed().as_secs_f64() * 1000.0
+            );
+            results
         } else {
             Vec::new()
         };
 
-        let _ = state.engine.stop();
-        thread::sleep(Duration::from_millis(50));
+        // 250ms start poll can miss a late driver/AV crash — don't score as "weak services".
+        let died_during_probes = start_res.is_ok() && !state.engine.winws_alive();
 
-        let adaptive = if start_res.is_ok() {
+        let t_stop = Instant::now();
+        let _ = state.engine.stop();
+        log::info!(
+            "timing diag.stop('{name}'): {:.0}ms",
+            t_stop.elapsed().as_secs_f64() * 1000.0
+        );
+
+        if !alive(&state, &run_id, &cancel) {
+            bail(&app, &state, &run_id, &cancel, &snapshot);
+            return;
+        }
+
+        let startup_failed = start_res.is_err() || died_during_probes;
+        let adaptive = if start_res.is_ok() && !died_during_probes {
             score_by_service(&host_results, PASS_THRESHOLD)
         } else {
             crate::engine::AdaptiveScore {
@@ -139,8 +304,12 @@ pub fn run_diagnostics_worker(app: AppHandle, cancel: Arc<Mutex<bool>>) {
                 all_probes: Vec::new(),
             }
         };
-        let score = rank_score(adaptive.score, &name);
-        let success = adaptive.success && score >= PASS_THRESHOLD;
+        let score = if startup_failed {
+            0
+        } else {
+            rank_score(adaptive.score, &name)
+        };
+        let success = !startup_failed && adaptive.success && score >= PASS_THRESHOLD;
         let latency_ms = adaptive
             .all_probes
             .iter()
@@ -161,8 +330,10 @@ pub fn run_diagnostics_worker(app: AppHandle, cancel: Arc<Mutex<bool>>) {
             .collect::<Vec<_>>()
             .join(" · ");
 
-        let notes = if let Err(e) = start_res {
+        let notes = if let Err(e) = &start_res {
             format!("Start failed: {e}")
+        } else if died_during_probes {
+            "Startup failed: winws exited during probes (WinDivert/AV?)".into()
         } else if success {
             let ok = adaptive.all_probes.iter().filter(|p| p.ok).count();
             let avg = adaptive
@@ -179,8 +350,14 @@ pub fn run_diagnostics_worker(app: AppHandle, cancel: Arc<Mutex<bool>>) {
                         .max(1) as u32,
                 )
                 .unwrap_or(0);
+            let port_hit = adaptive
+                .all_probes
+                .iter()
+                .find(|p| p.ok && p.note.starts_with("TCP:"))
+                .map(|p| format!(" · {}", p.note))
+                .unwrap_or_default();
             format!(
-                "{ok}/{} ok · avg {avg} ms · rank {score} · {service_summary}",
+                "{ok}/{} ok · avg {avg} ms · rank {score} · {service_summary}{port_hit}",
                 adaptive.all_probes.len()
             )
         } else if !adaptive.services.is_empty() {
@@ -213,8 +390,7 @@ pub fn run_diagnostics_worker(app: AppHandle, cancel: Arc<Mutex<bool>>) {
         };
 
         tested += 1;
-        {
-            let mut store = state.inner.lock().expect("state lock");
+        if !mutate_if_alive(&state, &run_id, &cancel, |store| {
             if let Some(p) = store.profiles.iter_mut().find(|p| p.id == profile_id) {
                 p.last_checked_at = Some(now_iso());
             }
@@ -228,25 +404,35 @@ pub fn run_diagnostics_worker(app: AppHandle, cancel: Arc<Mutex<bool>>) {
                 .count() as u32;
             store.diagnostics.progress =
                 ((tested * 90) / total.max(1)).saturating_add(5);
+        }) {
+            bail(&app, &state, &run_id, &cancel, &snapshot);
+            return;
         }
         let _ = app.emit("diagnostics:progress", ());
+
+        log::info!(
+            "timing diag.strategy('{name}'): {:.0}ms success={success} score={score}",
+            t_strategy.elapsed().as_secs_f64() * 1000.0
+        );
 
         if success {
             match &best {
                 Some((_, best_score)) if score <= *best_score => {}
-                _ => best = Some((name, score)),
+                _ => best = Some((name.clone(), score)),
+            }
+            // Fast mode: first dual-service pass wins.
+            if matches!(mode, DiagnosticsMode::Fast) {
+                break;
             }
         }
     }
 
-    if *cancel.lock().expect("flag") {
-        finalize_cancelled(&app, &state);
-        restore_previous(&state, was_running, previous.as_deref());
+    if !alive(&state, &run_id, &cancel) {
+        bail(&app, &state, &run_id, &cancel, &snapshot);
         return;
     }
 
-    {
-        let mut store = state.inner.lock().expect("state lock");
+    if !mutate_if_alive(&state, &run_id, &cancel, |store| {
         store.diagnostics.phase = DiagnosticPhase::Analyzing;
         store.diagnostics.current_strategy = Some("Selecting best strategy…".into());
         store.diagnostics.progress = 96;
@@ -254,33 +440,139 @@ pub fn run_diagnostics_worker(app: AppHandle, cancel: Arc<Mutex<bool>>) {
             .diagnostics
             .results
             .sort_by(|a, b| b.score.cmp(&a.score).then(a.latency_ms.cmp(&b.latency_ms)));
+    }) {
+        bail(&app, &state, &run_id, &cancel, &snapshot);
+        return;
     }
     let _ = app.emit("diagnostics:progress", ());
-    thread::sleep(Duration::from_millis(80));
 
-    if let Some((best_name, score)) = best {
-        apply_best(&state, &best_name);
-        state.history.push(
-            "diagnostics",
-            format!("Selected '{best_name}' (adaptive score {score}; YouTube+Discord required)"),
-        );
-        let _ = state.engine.start_no_elevate(Some(&best_name));
-    } else {
+    if !alive(&state, &run_id, &cancel) {
+        bail(&app, &state, &run_id, &cancel, &snapshot);
+        return;
+    }
+
+    let ranked: Vec<(String, u32)> = {
+        let store = state.inner.lock().expect("state lock");
+        store
+            .diagnostics
+            .results
+            .iter()
+            .filter(|r| r.success)
+            .map(|r| (r.name.clone(), r.score))
+            .collect()
+    };
+
+    if ranked.is_empty() {
         state.history.push(
             "diagnostics",
             "No strategy passed both YouTube and Discord; restoring previous state",
         );
-        restore_previous(&state, was_running, previous.as_deref());
+        if !alive(&state, &run_id, &cancel) {
+            bail(&app, &state, &run_id, &cancel, &snapshot);
+            return;
+        }
+        restore_previous(&state, &snapshot);
+        complete_ok(&app, &state, &run_id, &cancel, &snapshot);
+        return;
     }
 
-    {
-        let mut store = state.inner.lock().expect("state lock");
+    let mut started = false;
+    let mut last_err = String::new();
+    for (name, score) in &ranked {
+        if !alive(&state, &run_id, &cancel) {
+            bail(&app, &state, &run_id, &cancel, &snapshot);
+            return;
+        }
+        apply_best(&state, name);
+        match state.engine.start_no_elevate(Some(name)) {
+            Ok(_) => {
+                state.history.push(
+                    "diagnostics",
+                    format!(
+                        "Selected '{name}' (adaptive score {score}; YouTube+Discord required)"
+                    ),
+                );
+                started = true;
+                break;
+            }
+            Err(e) => {
+                last_err = e.to_string();
+                state.history.push(
+                    "diagnostics",
+                    format!("Could not start '{name}': {e}"),
+                );
+            }
+        }
+    }
+
+    if !alive(&state, &run_id, &cancel) {
+        bail(&app, &state, &run_id, &cancel, &snapshot);
+        return;
+    }
+
+    if !started {
+        fail_run(
+            &app,
+            &state,
+            &run_id,
+            &cancel,
+            &snapshot,
+            format!("Could not start a working strategy: {last_err}"),
+        );
+        return;
+    }
+
+    complete_ok(&app, &state, &run_id, &cancel, &snapshot);
+}
+
+fn complete_ok(
+    app: &AppHandle,
+    state: &AppState,
+    run_id: &str,
+    cancel: &Arc<Mutex<bool>>,
+    snapshot: &Snapshot,
+) {
+    if !mutate_if_alive(state, run_id, cancel, |store| {
         store.diagnostics.phase = DiagnosticPhase::Completed;
         store.diagnostics.progress = 100;
         store.diagnostics.current_strategy = None;
         store.diagnostics.finished_at = Some(now_iso());
         store.diagnostics.is_demo = false;
+    }) {
+        bail(app, state, run_id, cancel, snapshot);
+        return;
     }
+    let _ = app.emit("diagnostics:completed", ());
+}
+
+fn fail_run(
+    app: &AppHandle,
+    state: &AppState,
+    run_id: &str,
+    cancel: &Arc<Mutex<bool>>,
+    snapshot: &Snapshot,
+    message: impl Into<String>,
+) {
+    let message = message.into();
+    if superseded(state, run_id) {
+        return;
+    }
+    if cancelled(cancel) {
+        bail(app, state, run_id, cancel, snapshot);
+        return;
+    }
+    restore_previous(state, snapshot);
+    {
+        let mut store = state.inner.lock().expect("state lock");
+        if store.diagnostics.id != run_id {
+            return;
+        }
+        store.diagnostics.phase = DiagnosticPhase::Failed;
+        store.diagnostics.current_strategy = None;
+        store.diagnostics.finished_at = Some(now_iso());
+        store.diagnostics.is_demo = false;
+    }
+    state.history.push("diagnostics", message);
     let _ = app.emit("diagnostics:completed", ());
 }
 
@@ -297,28 +589,19 @@ fn apply_best(state: &AppState, best_name: &str) {
     state.engine.set_active_strategy(best_name.to_string());
 }
 
-fn restore_previous(state: &AppState, was_running: bool, previous: Option<&str>) {
-    if let Some(name) = previous {
+fn restore_previous(state: &AppState, snapshot: &Snapshot) {
+    if let Some(name) = snapshot.previous.as_deref() {
         state.engine.set_active_strategy(name.to_string());
         let mut store = state.inner.lock().expect("state lock");
         for p in store.profiles.iter_mut() {
             p.is_active = p.name == name;
         }
     }
-    if was_running {
-        if let Some(name) = previous {
+    if snapshot.was_running {
+        if let Some(name) = snapshot.previous.as_deref() {
             let _ = state.engine.start_no_elevate(Some(name));
         } else {
             let _ = state.engine.start_no_elevate(None);
         }
     }
-}
-
-fn finalize_cancelled(app: &AppHandle, state: &AppState) {
-    let mut store = state.inner.lock().expect("state lock");
-    store.diagnostics.phase = DiagnosticPhase::Cancelled;
-    store.diagnostics.current_strategy = None;
-    store.diagnostics.finished_at = Some(now_iso());
-    state.history.push("diagnostics", "Diagnostics cancelled");
-    let _ = app.emit("diagnostics:completed", ());
 }

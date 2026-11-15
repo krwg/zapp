@@ -21,7 +21,7 @@ pub fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
 
 pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let show_i = MenuItem::with_id(app, "show", "Открыть zapp", true, None::<&str>)?;
-    let toggle_i = MenuItem::with_id(app, "toggle", "Вкл / Выкл защиту", true, None::<&str>)?;
+    let toggle_i = MenuItem::with_id(app, "toggle", "Вкл / Выкл обход", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
     let quit_i = MenuItem::with_id(app, "quit", "Выйти", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show_i, &toggle_i, &sep, &quit_i])?;
@@ -34,7 +34,7 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let _tray = TrayIconBuilder::with_id("main")
         .icon(icon)
         .menu(&menu)
-        .tooltip("zapp")
+        .tooltip("zapp — обход DPI")
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => show_main_window(app),

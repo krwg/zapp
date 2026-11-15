@@ -6,10 +6,12 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
+
+use crate::engine::kill_orphan_winws;
 
 use super::protocol::{HelperRequest, HelperResponse, HelperStatus};
 use super::{helper_state_dir, token_path, HELPER_PORT};
@@ -120,33 +122,27 @@ fn handle(runtime: &Mutex<Runtime>, req: HelperRequest) -> HelperResponse {
             strategy,
             ..
         } => {
+            let t0 = Instant::now();
+            // Own the Child — stop previous via kill/wait, no taskkill on hot path.
             stop_child(&mut rt);
-            kill_winws_os();
-            
-            
-            std::thread::sleep(Duration::from_millis(200));
 
             match spawn_winws(&winws, &work_dir, &args, &strategy) {
-                Ok(child) => {
+                Ok(mut child) => {
                     let pid = child.id();
-                    rt.child = Some(child);
-                    rt.strategy = Some(strategy.clone());
-
-                    
-                    let mut alive = false;
-                    for _ in 0..30 {
-                        std::thread::sleep(Duration::from_millis(200));
-                        if winws_running() || child_alive(&mut rt.child) {
-                            alive = true;
-                            std::thread::sleep(Duration::from_millis(500));
-                            alive = winws_running() || child_alive(&mut rt.child);
+                    let deadline = Instant::now() + Duration::from_millis(250);
+                    let mut alive = true;
+                    while Instant::now() < deadline {
+                        if let Ok(Some(_)) = child.try_wait() {
+                            alive = false;
                             break;
                         }
+                        std::thread::sleep(Duration::from_millis(15));
                     }
 
                     if !alive {
                         let log_tail = read_log_tail(1200);
-                        let _ = stop_child(&mut rt);
+                        rt.child = None;
+                        rt.strategy = None;
                         return HelperResponse {
                             ok: false,
                             message: format!(
@@ -161,6 +157,13 @@ fn handle(runtime: &Mutex<Runtime>, req: HelperRequest) -> HelperResponse {
                             status: Some(status_of(&mut rt)),
                         };
                     }
+
+                    rt.child = Some(child);
+                    rt.strategy = Some(strategy.clone());
+                    eprintln!(
+                        "helper start '{strategy}' pid={pid} in {:.0}ms",
+                        t0.elapsed().as_secs_f64() * 1000.0
+                    );
                     HelperResponse {
                         ok: true,
                         message: format!("started {strategy} pid={pid}"),
@@ -176,7 +179,6 @@ fn handle(runtime: &Mutex<Runtime>, req: HelperRequest) -> HelperResponse {
         }
         HelperRequest::Stop { .. } => {
             stop_child(&mut rt);
-            kill_winws_os();
             HelperResponse {
                 ok: true,
                 message: "stopped".into(),
@@ -185,8 +187,7 @@ fn handle(runtime: &Mutex<Runtime>, req: HelperRequest) -> HelperResponse {
         }
         HelperRequest::Reset { .. } => {
             stop_child(&mut rt);
-            kill_winws_os();
-            
+            kill_orphan_winws();
             let _ = hidden("net").args(["stop", "WinDivert"]).status();
             HelperResponse {
                 ok: true,
@@ -196,7 +197,6 @@ fn handle(runtime: &Mutex<Runtime>, req: HelperRequest) -> HelperResponse {
         }
         HelperRequest::Shutdown { .. } => {
             stop_child(&mut rt);
-            kill_winws_os();
             HelperResponse {
                 ok: true,
                 message: "shutting down".into(),
@@ -308,12 +308,10 @@ fn request_token(req: &HelperRequest) -> &str {
 }
 
 fn status_of(rt: &mut Runtime) -> HelperStatus {
-    let alive = child_alive(&mut rt.child) || winws_running();
+    let alive = child_alive(&mut rt.child);
     if !alive {
         rt.child = None;
-        if !winws_running() {
-            rt.strategy = None;
-        }
+        rt.strategy = None;
     }
     HelperStatus {
         running: alive,
@@ -352,27 +350,6 @@ fn child_alive(child: &mut Option<Child>) -> bool {
         Some(c) => matches!(c.try_wait(), Ok(None)),
         None => false,
     }
-}
-
-fn winws_running() -> bool {
-    hidden("tasklist")
-        .args(["/FI", "IMAGENAME eq winws.exe", "/NH"])
-        .output()
-        .map(|out| {
-            String::from_utf8_lossy(&out.stdout)
-                .to_ascii_lowercase()
-                .contains("winws.exe")
-        })
-        .unwrap_or(false)
-}
-
-fn kill_winws_os() {
-    let _ = hidden("taskkill")
-        .args(["/IM", "winws.exe", "/F", "/T"])
-        .status();
-    let _ = hidden("taskkill")
-        .args(["/FI", "WINDOWTITLE eq zapret:*", "/F"])
-        .status();
 }
 
 fn hidden(program: &str) -> Command {

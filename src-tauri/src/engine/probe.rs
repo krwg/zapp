@@ -2,7 +2,9 @@
 // ║                   engine/probe                   ║
 // ╚════════════════════════════════════════════════════╝
 
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -33,7 +35,7 @@ pub struct DiagTarget {
     pub service: &'static str,
     pub host: &'static str,
     pub port: u16,
-    /// When true, run HTTPS after a successful TCP connect.
+    /// When true, run HTTPS (skip redundant TCP:443).
     pub https: bool,
     /// Soft hosts affect the score but cannot alone fail the service.
     pub critical: bool,
@@ -82,20 +84,85 @@ pub fn diag_targets() -> Vec<DiagTarget> {
     ]
 }
 
-pub fn probe_tcp(host: &str, port: u16, timeout: Duration) -> ProbeResult {
-    let addr = format!("{host}:{port}");
-    let start = Instant::now();
+#[derive(Debug, Clone)]
+pub struct ResolvedTarget {
+    pub target: DiagTarget,
+    pub addrs: Vec<SocketAddr>,
+}
 
-    let resolved = match addr.to_socket_addrs() {
-        Ok(iter) => iter.collect::<Vec<_>>(),
-        Err(e) => {
-            return ProbeResult {
-                ok: false,
-                latency_ms: None,
-                note: format!("DNS failed: {e}"),
-                protocol: "tcp",
-                weight: 1,
-            };
+/// Prefer IPv4 — bare AAAA with no v6 route causes false connect timeouts.
+fn prefer_ipv4(addrs: impl IntoIterator<Item = SocketAddr>) -> Vec<SocketAddr> {
+    let all: Vec<SocketAddr> = addrs.into_iter().collect();
+    let v4: Vec<SocketAddr> = all
+        .iter()
+        .copied()
+        .filter(|a| matches!(a.ip(), IpAddr::V4(_)))
+        .collect();
+    if !v4.is_empty() {
+        v4
+    } else {
+        all
+    }
+}
+
+/// Resolve DNS once before the strategy loop — DNS is strategy-independent.
+pub fn resolve_diag_targets(targets: &[DiagTarget]) -> Vec<ResolvedTarget> {
+    let t0 = Instant::now();
+    let resolved: Vec<ResolvedTarget> = targets
+        .iter()
+        .map(|target| {
+            let mut addrs: Vec<SocketAddr> = format!("{}:{}", target.host, target.port)
+                .to_socket_addrs()
+                .map(|i| prefer_ipv4(i))
+                .unwrap_or_default();
+            // Also resolve :443 for HTTPS hosts so resolve() has usable addrs.
+            if target.https && target.port != 443 {
+                if let Ok(extra) = format!("{}:443", target.host).to_socket_addrs() {
+                    for a in prefer_ipv4(extra) {
+                        if !addrs.contains(&a) {
+                            addrs.push(a);
+                        }
+                    }
+                }
+            }
+            ResolvedTarget {
+                target: *target,
+                addrs,
+            }
+        })
+        .collect();
+    log::info!(
+        "timing dns_resolve({} hosts): {:.0}ms",
+        targets.len(),
+        t0.elapsed().as_secs_f64() * 1000.0
+    );
+    resolved
+}
+
+pub fn probe_tcp(host: &str, port: u16, timeout: Duration) -> ProbeResult {
+    probe_tcp_addrs(host, port, &[], timeout)
+}
+
+fn probe_tcp_addrs(host: &str, port: u16, pre: &[SocketAddr], timeout: Duration) -> ProbeResult {
+    let start = Instant::now();
+    let per_addr = timeout.min(Duration::from_millis(350));
+    let resolved: Vec<SocketAddr> = if !pre.is_empty() {
+        let mut addrs: Vec<SocketAddr> = prefer_ipv4(pre.iter().map(|a| SocketAddr::new(a.ip(), port)));
+        addrs.sort_by_key(|a| a.ip().to_string());
+        addrs.dedup();
+        addrs
+    } else {
+        match format!("{host}:{port}").to_socket_addrs() {
+            Ok(iter) => prefer_ipv4(iter),
+            Err(e) => {
+                return ProbeResult {
+                    ok: false,
+                    latency_ms: None,
+                    note: format!("DNS failed: {e}"),
+                    protocol: "tcp",
+                    weight: 1,
+                };
+            }
         }
     };
 
@@ -109,8 +176,8 @@ pub fn probe_tcp(host: &str, port: u16, timeout: Duration) -> ProbeResult {
         };
     }
 
-    for socket in resolved {
-        match TcpStream::connect_timeout(&socket, timeout) {
+    for socket in &resolved {
+        match TcpStream::connect_timeout(socket, per_addr) {
             Ok(_) => {
                 let ms = start.elapsed().as_millis().min(u32::MAX as u128) as u32;
                 return ProbeResult {
@@ -134,15 +201,90 @@ pub fn probe_tcp(host: &str, port: u16, timeout: Duration) -> ProbeResult {
     }
 }
 
+/// Parallel alt-port TCP with a shared deadline (discord.media 2053/2083/8443).
+/// Any open port counts as success; notes record which port answered.
+fn probe_tcp_ports_parallel(
+    host: &str,
+    ports: &[u16],
+    pre: &[SocketAddr],
+    timeout: Duration,
+) -> ProbeResult {
+    let start = Instant::now();
+    let results: Vec<ProbeResult> = thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(ports.len());
+        for &port in ports {
+            handles.push(scope.spawn(move || {
+                let mut r = probe_tcp_addrs(host, port, pre, timeout);
+                if r.ok {
+                    r.note = format!("TCP:{port} OK");
+                } else {
+                    r.note = format!("TCP:{port} fail");
+                }
+                r
+            }));
+        }
+        handles
+            .into_iter()
+            .filter_map(|h| h.join().ok())
+            .collect()
+    });
+
+    if let Some(ok) = results.iter().find(|r| r.ok).cloned() {
+        return ok;
+    }
+
+    let tried = ports
+        .iter()
+        .map(|p| p.to_string())
+        .collect::<Vec<_>>()
+        .join("/");
+    ProbeResult {
+        ok: false,
+        latency_ms: None,
+        note: format!("TCP fail on {tried} ({:.0}ms)", start.elapsed().as_secs_f64() * 1000.0),
+        protocol: "tcp",
+        weight: 1,
+    }
+}
+
+fn build_https_client(host: &str, addrs: &[SocketAddr], timeout: Duration) -> Result<reqwest::blocking::Client, String> {
+    let mut builder = reqwest::blocking::Client::builder()
+        .timeout(timeout)
+        .connect_timeout(timeout.min(Duration::from_millis(700)))
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
+        .pool_max_idle_per_host(0)
+        .user_agent("zapp/0.2");
+
+    if !addrs.is_empty() {
+        // Map hostname → IPs so the URL keeps the real host (SNI/Host intact).
+        let https_addrs: Vec<SocketAddr> = prefer_ipv4(
+            addrs
+                .iter()
+                .filter(|a| a.port() == 443)
+                .copied()
+                .chain(addrs.iter().map(|a| SocketAddr::new(a.ip(), 443))),
+        );
+        let mut https_addrs = https_addrs;
+        https_addrs.sort_by_key(|a| a.ip().to_string());
+        https_addrs.dedup();
+        if !https_addrs.is_empty() {
+            builder = builder.resolve_to_addrs(host, &https_addrs);
+        }
+    }
+
+    builder.build().map_err(|e| e.to_string())
+}
+
 pub fn probe_https(host: &str, timeout: Duration) -> ProbeResult {
+    probe_https_addrs(host, &[], timeout)
+}
+
+fn probe_https_addrs(host: &str, addrs: &[SocketAddr], timeout: Duration) -> ProbeResult {
+    // Hostname in the URL (not a raw IP) so TLS SNI matches the real site.
     let url = format!("https://{host}/");
     let start = Instant::now();
-    let client = match reqwest::blocking::Client::builder()
-        .timeout(timeout)
-        .redirect(reqwest::redirect::Policy::limited(3))
-        .user_agent("zapp/0.2")
-        .build()
-    {
+    let client = match build_https_client(host, addrs, timeout) {
         Ok(c) => c,
         Err(e) => {
             return ProbeResult {
@@ -155,10 +297,24 @@ pub fn probe_https(host: &str, timeout: Duration) -> ProbeResult {
         }
     };
 
-    match client.head(&url).send().or_else(|_| client.get(&url).send()) {
+    // HEAD→GET only on Method Not Allowed / Not Implemented — never on timeout.
+    let result = match client.head(&url).send() {
+        Ok(resp) => {
+            let code = resp.status().as_u16();
+            if code == 405 || code == 501 {
+                client.get(&url).send()
+            } else {
+                Ok(resp)
+            }
+        }
+        Err(e) => Err(e),
+    };
+
+    match result {
         Ok(resp) => {
             let ms = start.elapsed().as_millis().min(u32::MAX as u128) as u32;
             let code = resp.status().as_u16();
+            // 2xx/3xx/4xx (incl. 301 with redirect::none) mean the host is reachable.
             let ok = code < 500;
             ProbeResult {
                 ok,
@@ -180,6 +336,7 @@ pub fn probe_https(host: &str, timeout: Duration) -> ProbeResult {
 
 /// Fast adaptive matrix: TCP:443 gate, then HTTPS if TCP lives.
 pub fn probe_matrix_host(host: &str, timeout: Duration) -> Vec<ProbeResult> {
+    // Keep for Sites page: still TCP gate then HTTPS.
     let tcp_budget = timeout.min(Duration::from_millis(700));
     let tcp = probe_tcp(host, 443, tcp_budget);
     if !tcp.ok {
@@ -190,43 +347,80 @@ pub fn probe_matrix_host(host: &str, timeout: Duration) -> Vec<ProbeResult> {
     vec![tcp, https]
 }
 
-fn probe_matrix_target(target: &DiagTarget, timeout: Duration) -> Vec<ProbeResult> {
-    let tcp_budget = timeout.min(Duration::from_millis(700));
-    let mut tcp = probe_tcp(target.host, target.port, tcp_budget);
-    if target.port != 443 {
-        tcp.note = format!("TCP:{} {}", target.port, if tcp.ok { "OK" } else { "fail" });
-        // Alt-port media endpoints: try a couple of Flowseal ports if the first fails.
-        if !tcp.ok {
-            for alt in [2083u16, 8443] {
-                let mut retry = probe_tcp(target.host, alt, tcp_budget);
-                if retry.ok {
-                    retry.note = format!("TCP:{alt} OK");
-                    return vec![retry];
-                }
-            }
-            return vec![tcp];
-        }
+fn probe_matrix_resolved(resolved: &ResolvedTarget, timeout: Duration) -> Vec<ProbeResult> {
+    let target = &resolved.target;
+    let addrs = &resolved.addrs;
+
+    if !target.https {
+        // TCP-only (discord.media): try Flowseal alt ports in parallel.
+        let ports: Vec<u16> = if target.port == 2053 {
+            vec![2053, 2083, 8443]
+        } else {
+            vec![target.port]
+        };
+        let tcp_budget = timeout.min(Duration::from_millis(700));
+        let tcp = probe_tcp_ports_parallel(target.host, &ports, addrs, tcp_budget);
         return vec![tcp];
     }
-    if !tcp.ok || !target.https {
-        return vec![tcp];
-    }
+
+    // HTTPS targets: skip redundant TCP — one TLS is enough.
     let https_budget = timeout.min(Duration::from_millis(900));
-    let https = probe_https(target.host, https_budget);
-    vec![tcp, https]
+    vec![probe_https_addrs(target.host, addrs, https_budget)]
 }
 
-/// Probe every host in parallel (scoped threads). Order matches `targets`.
+/// Probe hosts in parallel. Critical hosts first; soft hosts skipped if a critical fails.
 pub fn probe_targets_parallel(
     targets: &[DiagTarget],
     timeout: Duration,
 ) -> Vec<(DiagTarget, Vec<ProbeResult>)> {
-    thread::scope(|scope| {
-        let mut handles = Vec::with_capacity(targets.len());
-        for target in targets {
+    let resolved = resolve_diag_targets(targets);
+    probe_resolved_parallel(&resolved, timeout, None)
+}
+
+pub fn probe_resolved_parallel(
+    resolved: &[ResolvedTarget],
+    timeout: Duration,
+    external_cancel: Option<Arc<Mutex<bool>>>,
+) -> Vec<(DiagTarget, Vec<ProbeResult>)> {
+    let t0 = Instant::now();
+    let critical: Vec<&ResolvedTarget> = resolved.iter().filter(|r| r.target.critical).collect();
+    let soft: Vec<&ResolvedTarget> = resolved.iter().filter(|r| !r.target.critical).collect();
+
+    let abort = Arc::new(AtomicBool::new(false));
+    let cancelled = |flag: &Option<Arc<Mutex<bool>>>| {
+        flag.as_ref()
+            .map(|c| *c.lock().expect("flag"))
+            .unwrap_or(false)
+    };
+
+    let critical_results: Vec<(DiagTarget, Vec<ProbeResult>)> = thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(critical.len());
+        for item in &critical {
+            let abort = Arc::clone(&abort);
+            let ext = external_cancel.clone();
             handles.push(scope.spawn(move || {
-                let probes = probe_matrix_target(target, timeout);
-                (*target, probes)
+                if abort.load(Ordering::Relaxed) || cancelled(&ext) {
+                    return (
+                        item.target,
+                        vec![ProbeResult {
+                            ok: false,
+                            latency_ms: None,
+                            note: "Skipped".into(),
+                            protocol: "skip",
+                            weight: 1,
+                        }],
+                    );
+                }
+                let probes = probe_matrix_resolved(item, timeout);
+                let host_ok = score_probes(&probes) >= 55 || probes.iter().any(|p| p.ok);
+                // Early-cancel siblings when a critical host is clearly down.
+                if !host_ok && probes.iter().all(|p| !p.ok) {
+                    abort.store(true, Ordering::Relaxed);
+                }
+                if cancelled(&ext) {
+                    abort.store(true, Ordering::Relaxed);
+                }
+                (item.target, probes)
             }));
         }
         handles
@@ -246,7 +440,65 @@ pub fn probe_targets_parallel(
                 })
             })
             .collect()
-    })
+    });
+
+    if cancelled(&external_cancel) {
+        log::info!(
+            "timing probe_batch: {:.0}ms cancelled",
+            t0.elapsed().as_secs_f64() * 1000.0
+        );
+        return critical_results;
+    }
+
+    let critical_failed = critical_results.iter().any(|(_, probes)| {
+        probes.is_empty() || probes.iter().all(|p| !p.ok)
+    });
+
+    let mut out = critical_results;
+
+    if !critical_failed && !soft.is_empty() && !cancelled(&external_cancel) {
+        let soft_results: Vec<(DiagTarget, Vec<ProbeResult>)> = thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(soft.len());
+            for item in &soft {
+                handles.push(scope.spawn(move || {
+                    let probes = probe_matrix_resolved(item, timeout);
+                    (item.target, probes)
+                }));
+            }
+            handles
+                .into_iter()
+                .filter_map(|h| h.join().ok())
+                .collect()
+        });
+        out.extend(soft_results);
+    } else if critical_failed {
+        for item in soft {
+            out.push((
+                item.target,
+                vec![ProbeResult {
+                    ok: false,
+                    latency_ms: None,
+                    note: "Skipped after critical failure".into(),
+                    protocol: "skip",
+                    weight: 1,
+                }],
+            ));
+        }
+    }
+
+    // Preserve original order.
+    let mut ordered = Vec::with_capacity(resolved.len());
+    for item in resolved {
+        if let Some(found) = out.iter().find(|(t, _)| t.host == item.target.host && t.port == item.target.port) {
+            ordered.push(found.clone());
+        }
+    }
+
+    log::info!(
+        "timing probe_batch: {:.0}ms critical_failed={critical_failed}",
+        t0.elapsed().as_secs_f64() * 1000.0
+    );
+    ordered
 }
 
 fn latency_points(ms: u32) -> u32 {
@@ -304,9 +556,6 @@ pub struct AdaptiveScore {
 }
 
 /// Score by service. A strategy only "works" when every critical service passes.
-/// Within a service, the worst *critical* host decides pass/fail so gateway
-/// failures cannot hide behind a living discord.com homepage. Soft hosts
-/// (CDN) only nudge the numeric score.
 pub fn score_by_service(
     host_results: &[(DiagTarget, Vec<ProbeResult>)],
     pass_threshold: u32,
@@ -344,7 +593,6 @@ pub fn score_by_service(
             } else {
                 soft.iter().sum::<u32>() / soft.len() as u32
             };
-            // 85% critical floor, 15% soft hosts — soft cannot rescue a dead gateway.
             let score = ((critical_floor * 85) + (soft_avg * 15)) / 100;
             ServiceScore {
                 service: service.into(),

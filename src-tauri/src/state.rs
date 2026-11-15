@@ -3,10 +3,10 @@
 // ╚════════════════════════════════════════════════════╝
 
 use std::sync::{Arc, Mutex};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 use crate::diagnostics::run_diagnostics_worker;
 use crate::engine::{
@@ -24,6 +24,11 @@ pub struct AppState {
     pub history: HistoryLog,
     pub(crate) inner: Mutex<Store>,
     diag_cancel: Mutex<Option<Arc<Mutex<bool>>>>,
+    diag_worker: Mutex<Option<JoinHandle<()>>>,
+    /// Latest prefer_previous requested while a run was still winding down.
+    diag_pending: Mutex<Option<bool>>,
+    /// Serializes start / queue / drain so runs are not silently dropped.
+    diag_gate: Mutex<()>,
 }
 
 pub(crate) struct Store {
@@ -62,6 +67,9 @@ impl AppState {
             updates,
             history: HistoryLog::open(app_data),
             diag_cancel: Mutex::new(None),
+            diag_worker: Mutex::new(None),
+            diag_pending: Mutex::new(None),
+            diag_gate: Mutex::new(()),
             inner: Mutex::new(Store {
                 profiles,
                 services: seed_services(),
@@ -148,12 +156,61 @@ impl AppState {
     }
 
     pub fn start_diagnostics(&self, app: AppHandle) -> AppResult<DiagnosticRun> {
-        
+        // Manual Smart check: do not prefer the previous strategy (UDP issues are invisible to probes).
+        self.start_diagnostics_with(app, false)
+    }
+
+    /// Background re-check may pass `prefer_previous = true` to verify the active strategy first.
+    pub fn start_diagnostics_with(
+        &self,
+        app: AppHandle,
+        prefer_previous: bool,
+    ) -> AppResult<DiagnosticRun> {
+        let _gate = self.diag_gate.lock().expect("diag gate");
         self.cancel_diagnostics_flag();
 
+        // If a worker is still alive (running or cancelling), queue the latest request
+        // instead of spawning a second joiner chain that can silently drop a start.
+        {
+            let worker = self.diag_worker.lock().expect("worker lock");
+            if worker.as_ref().is_some_and(|h| !h.is_finished()) {
+                *self.diag_pending.lock().expect("pending lock") = Some(prefer_previous);
+                let mut store = self.inner.lock().expect("state lock");
+                if matches!(
+                    store.diagnostics.phase,
+                    DiagnosticPhase::Preparing
+                        | DiagnosticPhase::Testing
+                        | DiagnosticPhase::Analyzing
+                ) {
+                    store.diagnostics.current_strategy =
+                        Some("Busy — will restart when ready…".into());
+                }
+                self.history.push(
+                    "diagnostics",
+                    "Smart check busy — queued a restart after the current run ends",
+                );
+                return Ok(store.diagnostics.clone());
+            }
+        }
+
+        // Reap a finished handle (join is instant once is_finished).
+        if let Some(done) = self.diag_worker.lock().expect("worker lock").take() {
+            let _ = done.join();
+        }
+        *self.diag_pending.lock().expect("pending lock") = None;
+
+        self.spawn_diagnostics_locked(app, prefer_previous)
+    }
+
+    fn spawn_diagnostics_locked(
+        &self,
+        app: AppHandle,
+        prefer_previous: bool,
+    ) -> AppResult<DiagnosticRun> {
         let cancel = Arc::new(Mutex::new(false));
         *self.diag_cancel.lock().expect("cancel lock") = Some(cancel.clone());
 
+        let run_id = new_id("diag");
         let total = {
             let store = self.inner.lock().expect("state lock");
             store.profiles.len() as u32
@@ -162,7 +219,7 @@ impl AppState {
         {
             let mut store = self.inner.lock().expect("state lock");
             store.diagnostics = DiagnosticRun {
-                id: new_id("diag"),
+                id: run_id.clone(),
                 phase: DiagnosticPhase::Preparing,
                 progress: 0,
                 current_strategy: Some("Preparing…".into()),
@@ -176,19 +233,38 @@ impl AppState {
             };
         }
 
-        thread::spawn(move || {
-            run_diagnostics_worker(app, cancel);
+        let handle = thread::spawn(move || {
+            run_diagnostics_worker(app.clone(), run_id, cancel, prefer_previous);
+            // Drain queued restart without holding the gate across the worker body.
+            let app_for_pending = app.clone();
+            if let Some(state) = app.try_state::<AppState>() {
+                let pending = {
+                    let _gate = state.diag_gate.lock().expect("diag gate");
+                    let _ = state.diag_worker.lock().expect("worker lock").take();
+                    state.diag_pending.lock().expect("pending lock").take()
+                };
+                if let Some(prefer) = pending {
+                    let _ = state.start_diagnostics_with(app_for_pending, prefer);
+                }
+            }
         });
+        *self.diag_worker.lock().expect("worker lock") = Some(handle);
 
         Ok(self.diagnostics())
     }
 
     pub fn cancel_diagnostics(&self) -> AppResult<DiagnosticRun> {
+        // Only flip the cancel flag; the worker restores engine/profile state and emits Cancelled.
         self.cancel_diagnostics_flag();
         let mut store = self.inner.lock().expect("state lock");
-        store.diagnostics.phase = DiagnosticPhase::Cancelled;
-        store.diagnostics.current_strategy = None;
-        store.diagnostics.finished_at = Some(now_iso());
+        if matches!(
+            store.diagnostics.phase,
+            DiagnosticPhase::Preparing
+                | DiagnosticPhase::Testing
+                | DiagnosticPhase::Analyzing
+        ) {
+            store.diagnostics.current_strategy = Some("Cancelling…".into());
+        }
         Ok(store.diagnostics.clone())
     }
 
@@ -464,6 +540,9 @@ impl AppState {
         if let Some(v) = patch.diagnostics_interval_hours {
             store.settings.diagnostics_interval_hours = v;
         }
+        if let Some(v) = patch.diagnostics_mode {
+            store.settings.diagnostics_mode = v;
+        }
         if let Some(v) = patch.network_timeout_ms {
             store.settings.network_timeout_ms = v;
         }
@@ -682,6 +761,7 @@ fn seed_settings() -> AppSettings {
         auto_install_updates: true,
         auto_diagnostics: true,
         diagnostics_interval_hours: 24,
+        diagnostics_mode: DiagnosticsMode::Fast,
         network_timeout_ms: 5000,
         network_retries: 2,
         advanced_logging: false,

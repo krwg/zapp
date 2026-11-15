@@ -2,11 +2,12 @@
 // ║           pages/Overview/OverviewPage            ║
 // ╚════════════════════════════════════════════════════╝
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ChevronDown, Link as LinkIcon } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { ConnectionCard } from '@/components/domain/ConnectionCard/ConnectionCard'
 import { PageHeader } from '@/components/layout/PageHeader/PageHeader'
+import { Button } from '@/components/ui/Button/Button'
 import { Hint } from '@/components/ui/Hint/Hint'
 import { StatusBadge } from '@/components/ui/StatusBadge/StatusBadge'
 
@@ -16,18 +17,82 @@ import type { AvailabilityStatus } from '@/types'
 import { formatDateTime, formatLatency, formatRelative } from '@/utils/format'
 import { sourceLabelKey } from '@/utils/modeLabels'
 import { serviceIcon } from '@/utils/serviceIcons'
+import { displaySiteStatus, isSiteCheckFresh } from '@/utils/siteStatus'
 import { formatVersion } from '@/utils/version'
 import page from '../shared/page.module.css'
 import styles from './OverviewPage.module.css'
 
+function friendlyModeName(name: string): string {
+  // "general (FAKE TLS AUTO)" → keep readable stem before the technical paren.
+  const cut = name.indexOf(' (')
+  if (cut > 0) return name.slice(0, cut)
+  return name
+}
+
 export function OverviewPage() {
-  const { snapshot, toggleEngine, resetEngine, checkService, busy } = useAppState()
+  const {
+    snapshot,
+    diagnosticsLive,
+    toggleEngine,
+    resetEngine,
+    checkService,
+    checkAllServices,
+    busy,
+  } = useAppState()
   const { t, locale } = useLocale()
+  const navigate = useNavigate()
   const [modeOpen, setModeOpen] = useState(false)
+  const lastSilentProbeAt = useRef(0)
+
+  useEffect(() => {
+    if (!snapshot) return
+    if (snapshot.connection.status !== 'running') return
+    const phase = diagnosticsLive?.phase
+    if (phase === 'preparing' || phase === 'testing' || phase === 'analyzing') return
+    const now = Date.now()
+    if (now - lastSilentProbeAt.current < 45_000) return
+    lastSilentProbeAt.current = now
+    void checkAllServices({ silent: true })
+  }, [snapshot, diagnosticsLive?.phase, checkAllServices])
 
   if (!snapshot) return null
 
   const { connection, activeProfile, services, system } = snapshot
+  const neverChecked =
+    !activeProfile?.lastCheckedAt &&
+    !(diagnosticsLive?.results?.length) &&
+    diagnosticsLive?.phase !== 'completed'
+
+  const yt = services.find((s) => /youtube/i.test(s.name) || /youtube/i.test(s.host))
+  const discord = services.find((s) => /discord/i.test(s.name) || /discord/i.test(s.host))
+  const sitesFreshOk =
+    connection.status === 'running' &&
+    !!yt &&
+    !!discord &&
+    displaySiteStatus(yt, connection.status) === 'available' &&
+    displaySiteStatus(discord, connection.status) === 'available'
+
+  const modeSummary = (() => {
+    if (!activeProfile) return null
+    if (neverChecked) return null
+    const parts: string[] = []
+    parts.push(
+      activeProfile.isAutoSelected ? t('home.modeAuto') : t('home.modeManual'),
+    )
+    if (activeProfile.lastCheckedAt) {
+      parts.push(
+        t('home.modeChecked', {
+          when: formatRelative(activeProfile.lastCheckedAt, locale),
+        }),
+      )
+    }
+    if (sitesFreshOk) {
+      parts.push(t('home.modeSitesOk'))
+    } else if (connection.status === 'running') {
+      parts.push(t('home.modeSitesMixed'))
+    }
+    return parts.join(' · ')
+  })()
 
   const statusTone = (status: AvailabilityStatus) => {
     switch (status) {
@@ -38,7 +103,7 @@ export function OverviewPage() {
       case 'checking':
         return { label: t('status.checking'), tone: 'warning' as const, pulse: true }
       default:
-        return { label: t('status.unknown'), tone: 'neutral' as const }
+        return { label: t('status.notChecked'), tone: 'neutral' as const }
     }
   }
 
@@ -75,10 +140,13 @@ export function OverviewPage() {
             <div className={styles.modeHeaderCopy}>
               <div className={styles.modeEyebrow}>{t('home.activeMode')}</div>
               <div className={styles.modeName}>
-                {activeProfile?.name ?? t('home.noMode')}
+                {activeProfile ? friendlyModeName(activeProfile.name) : t('home.noMode')}
               </div>
-              {activeProfile && !modeOpen && (
-                <div className={styles.modePreview}>{activeProfile.strategyType}</div>
+              {modeSummary && !modeOpen && (
+                <div className={styles.modePreview}>{modeSummary}</div>
+              )}
+              {neverChecked && !modeOpen && (
+                <div className={styles.modePreview}>{t('home.runSmartCheckHint')}</div>
               )}
             </div>
             <ChevronDown
@@ -87,8 +155,21 @@ export function OverviewPage() {
             />
           </button>
 
+          {neverChecked && (
+            <div className={styles.modeCta}>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => navigate('/diagnostics')}
+              >
+                {t('home.runSmartCheck')}
+              </Button>
+            </div>
+          )}
+
           {modeOpen && activeProfile && (
             <div className={styles.modeBody}>
+              {modeSummary && <p className={styles.modeSummaryLine}>{modeSummary}</p>}
               <div className={page.kv}>
                 <div className={page.kvRow}>
                   <span className={page.kvLabel}>{t('home.name')}</span>
@@ -134,13 +215,18 @@ export function OverviewPage() {
           </div>
           <div className={styles.siteList}>
             {services.map((service) => {
-              const st = statusTone(service.status)
+              const shown = displaySiteStatus(service, connection.status)
+              const st = statusTone(shown)
               const icon = serviceIcon(service.name) ?? serviceIcon(service.host)
+              const fresh =
+                connection.status === 'running' && isSiteCheckFresh(service.lastCheckedAt)
               return (
                 <button
                   key={service.id}
                   type="button"
-                  className={styles.siteRow}
+                  className={[styles.siteRow, shown === 'unknown' ? styles.siteStale : ''].join(
+                    ' ',
+                  )}
                   disabled={busy[`service:${service.id}`] || service.status === 'checking'}
                   onClick={() => void checkService(service.id)}
                 >
@@ -158,8 +244,9 @@ export function OverviewPage() {
                   <div className={styles.siteMeta}>
                     <StatusBadge label={st.label} tone={st.tone} pulse={st.pulse} />
                     <div className={styles.siteStats}>
-                      {formatLatency(service.latencyMs)} ·{' '}
-                      {formatRelative(service.lastCheckedAt, locale)}
+                      {fresh
+                        ? `${formatLatency(service.latencyMs)} · ${formatRelative(service.lastCheckedAt, locale)}`
+                        : t('status.notChecked')}
                     </div>
                   </div>
                 </button>
