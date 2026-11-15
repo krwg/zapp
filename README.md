@@ -14,23 +14,24 @@ Run a DPI-bypass strategy for YouTube and Discord without a console window.
 
 [English](README.md) · [Русский](README.ru.md) · [Releases](https://github.com/krwg/zapp/releases)
 
-<!-- Screenshots still show pre-0.2.4 UI ("Protection"); reshoot before the next GitHub release. -->
 <img src="docs/screenshots/01-overview.png" alt="zapp Home" width="860" />
 
 </div>
 
 I made zapp because I was tired of launching BAT files with a console window you shouldn’t close, guessing which Flowseal strategy fits your ISP, and babysitting `winws` by hand.
 
-zapp wraps zapret and the [Flowseal strategy pack](https://github.com/Flowseal/zapret-discord-youtube) in a small Tauri app. Press Start, approve UAC once, and `winws` runs hidden in the background.
+zapp wraps zapret and the [Flowseal strategy pack](https://github.com/Flowseal/zapret-discord-youtube) in a small Tauri app. Press Start on the **Bypass** card, approve UAC once, and `winws` runs hidden in the background.
 
-Smart check tries each strategy against YouTube and Discord, including the Discord gateway and `discord.media` ports, and prefers one that passes both. The Sites page keeps checking YouTube, Discord and any hosts you add. The app, the engine and the strategies update separately. The interface comes in English and Russian, with light and dark themes, and the app can live in the tray.
+**Smart check** (Fast by default, Thorough optional) tries strategies against YouTube and Discord — gateway plus `discord.media` ports — and turns on one that passes both. From **0.2.4** the loop is much faster (one env check per run, ToolHelp instead of `tasklist` spam, DNS once, parallel media ports) and cancel/restart restores the previous mode cleanly. Home keeps site cards grey until a fresh probe; stale “Available” from days ago no longer looks like live access.
+
+The app, engine and strategies update separately. English and Russian UI, light/dark themes, tray support.
 
 zapp is not a VPN. Your IP stays visible and nothing is encrypted; the only thing that changes is how your packets look to DPI. Check that this is legal where you live.
 
 ## Install
 
 1. Download `zapp_*_x64-setup.exe` from [Releases](https://github.com/krwg/zapp/releases/latest) and install it.
-2. Open zapp, press **Start**, approve the UAC prompt.
+2. Open zapp, press **Start** on Bypass, approve the UAC prompt.
 3. Wait while the engine pack downloads, then run **Smart check**.
 
 Windows 10/11 x64. Admin rights are needed once, to start the helper.
@@ -49,7 +50,7 @@ Antivirus and SmartScreen sometimes flag WinDivert-based tools, because a packet
 
 Things I’d tell a friend before they install:
 
-- As of **0.2.3**, Smart check requires both YouTube and Discord (gateway + `discord.media` on Flowseal ports), not one blended score. It still only does **TCP/HTTPS probes**, not a real Discord client — **voice (UDP)** can fail while the Sites cards stay green.
+- As of **0.2.3+**, Smart check requires both YouTube and Discord (gateway + `discord.media` on Flowseal ports), not one blended score. It still only does **TCP/HTTPS probes**, not a real Discord client — **voice (UDP)** can fail while the Sites cards stay green.
 - Less often than before, but it happens: a high-scoring mode can still feel worse than a hand-picked Flowseal BAT. If Discord/YouTube misbehave, open **Modes** and activate one manually.
 - First launch needs GitHub access to download the engine pack. There is no offline pack picker in the UI yet.
 - Closing the window hides to the tray by default; the process is still running. Quit from the tray before reinstalling, or the setup cannot replace `zapp.exe`.
@@ -57,7 +58,7 @@ Things I’d tell a friend before they install:
 
 ## If something doesn't work
 
-If SmartScreen blocks the installer, choose *More info → Run anyway*, or verify the SHA256 first. If no strategy passes Smart check, close other zapret, VPN or DPI tools and run it again.
+If SmartScreen blocks the installer, choose *More info → Run anyway*, or verify the SHA256 first. If no strategy passes Smart check, close other zapret, VPN or DPI tools and run it again. If a Flowseal `.bat` left `winws.exe` running, stop it first — Smart check will tell you.
 
 To remove zapp completely, uninstall it and accept the cleanup prompt. By hand, delete `%APPDATA%\app.zapp.desktop` and `%LOCALAPPDATA%\zapp`.
 
