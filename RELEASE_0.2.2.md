@@ -2,25 +2,21 @@
 
 Quiet Windows client for [zapret](https://github.com/bol-van/zapret): hidden `winws`, no Flowseal consoles, separate Application / Engine / Strategies updates.
 
-### Upgrading from 0.2.0 / 0.2.1
+### Install
 
-1. Prefer **`zapp_0.2.2_x64-setup.exe`** (NSIS). It can offer a full cleanup of previous app data.
-2. If auto-update stuck on **Installing…** with **os error 740**, that build could not request elevation. Run the file from `%APPDATA%\app.zapp.desktop\downloads\` once, or install from Assets below and confirm UAC.
-3. Close the tray icon if the installer cannot replace `zapp.exe`.
-
-### Fixed
-
-- **Application auto-update failed with os error 740.** The client now launches the downloaded installer with `Start-Process -Verb RunAs`, so Windows shows a normal UAC prompt. Declining UAC returns the channel to Available instead of freezing on Installing….
+1. Run **`zapp_0.2.2_x64-setup.exe`** (NSIS) and open zapp.
+2. Press **Start** and approve UAC once.
+3. Wait for the engine pack to download (or enable auto-install on Updates), then run **Smart check**.
+4. If the installer cannot replace files, quit zapp from the tray first.
 
 ### Added
 
+- **Hidden engine.** Starts `winws` through one elevated helper — one UAC, no BAT consoles.
 - **NSIS full-cleanup page** when previous `%APPDATA%\app.zapp.desktop` / LocalAppData data exists (default-checked). Kills `zapp.exe` / `winws.exe`, removes both folders; shows a non-fatal message if a folder is locked.
 - **Uninstall prompt** to wipe leftover app data.
+- **Application auto-update** launches the downloaded installer with `Start-Process -Verb RunAs` so Windows shows a normal UAC prompt. Declining UAC returns the channel to Available.
 - Sidebar shows the **full semver** (e.g. `[0.2.2]`).
-
-### Changed
-
-- Installer hooks always terminate a running client before replace, so tray-hidden processes do not block updates.
+- Separate **Engine / Strategies** updates from Flowseal GitHub Releases.
 
 ### Known limitations
 
