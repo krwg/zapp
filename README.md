@@ -48,10 +48,10 @@ Antivirus and SmartScreen sometimes flag WinDivert-based tools, because a packet
 
 ## Known rough edges
 
-Things I’d tell a friend before they install:
+Short version before you install:
 
-- As of **0.2.3+**, Smart check requires both YouTube and Discord (gateway + `discord.media` on Flowseal ports), not one blended score. It still only does **TCP/HTTPS probes**, not a real Discord client — **voice (UDP)** can fail while the Sites cards stay green.
-- Less often than before, but it happens: a high-scoring mode can still feel worse than a hand-picked Flowseal BAT. If Discord/YouTube misbehave, open **Modes** and activate one manually.
+- As of **0.2.3+**, Smart check requires both YouTube and Discord (gateway + `discord.media` on Flowseal ports). It still only does **TCP/HTTPS probes**, not a real client — **Discord voice (UDP)** can fail while the Sites cards stay green.
+- From **0.2.4** the check is much faster and steadier; if something still feels off afterwards, open **Modes** and pick a strategy by hand.
 - First launch needs GitHub access to download the engine pack. There is no offline pack picker in the UI yet.
 - Closing the window hides to the tray by default; the process is still running. Quit from the tray before reinstalling, or the setup cannot replace `zapp.exe`.
 - Windows 10/11 x64 only. No macOS or Linux build.
