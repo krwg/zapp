@@ -12,7 +12,7 @@ use std::os::windows::process::CommandExt;
 use crate::engine::elevate;
 use crate::engine::faults::{EngineFault, FaultCode};
 use crate::engine::preflight::{run_preflight_scoped, PreflightScope};
-use crate::engine::process::{kill_orphan_winws, process_running};
+use crate::engine::process::{kill_orphan_winws, process_pid_running};
 use crate::engine::strategy::parse_strategy_bat;
 use crate::error::{AppError, AppResult};
 use crate::model::EngineStatus;
@@ -217,11 +217,25 @@ impl ManagedEngine {
     ) -> AppResult<EngineStatus> {
         let t_all = Instant::now();
 
+        // Never drop a live Child without killing — profile switch / diag restart
+        // used to orphan winws and leave stop() unable to reclaim it.
+        {
+            let mut inner = self.inner.lock().expect("engine lock");
+            inner.status = EngineStatus::Starting;
+            if let Some(mut child) = inner.child.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            let via_helper = inner.via_helper;
+            inner.child_pid = None;
+            inner.via_helper = false;
+            drop(inner);
+            if via_helper {
+                let _ = crate::helper::helper_stop(&self.app_data);
+            }
+        }
+
         let mut inner = self.inner.lock().expect("engine lock");
-        inner.status = EngineStatus::Starting;
-        inner.child = None;
-        inner.child_pid = None;
-        inner.via_helper = false;
 
         if !inner.layout.is_installed() {
             let fault = EngineFault::new(
@@ -364,23 +378,7 @@ impl ManagedEngine {
                     }
                 }
 
-                if alive || via_helper {
-                    if via_helper && !alive {
-                        if let Ok(st) = crate::helper::helper_status(&app_data) {
-                            if !st.running {
-                                let fault = EngineFault::new(
-                                    FaultCode::WinwsExitedImmediately,
-                                    "helper reports winws is not running after start",
-                                );
-                                inner.status = EngineStatus::Error;
-                                inner.last_error = Some(fault.message());
-                                inner.child = None;
-                                inner.child_pid = None;
-                                inner.via_helper = false;
-                                return Err(fault.into());
-                            }
-                        }
-                    }
+                if alive {
                     inner.status = EngineStatus::Running;
                     inner.session_started_at = Some(now_iso());
                     inner.uptime_anchor_secs = Some(chrono::Utc::now().timestamp());
@@ -398,7 +396,11 @@ impl ManagedEngine {
                 } else {
                     let fault = EngineFault::new(
                         FaultCode::WinwsExitedImmediately,
-                        "winws did not stay running after start",
+                        if via_helper {
+                            "helper reports winws is not running after start"
+                        } else {
+                            "winws did not stay running after start"
+                        },
                     );
                     log::error!("{}", fault.message());
                     inner.status = EngineStatus::Error;
@@ -417,6 +419,12 @@ impl ManagedEngine {
                 Err(fault.into())
             }
         }
+    }
+
+    /// Stop owned winws and ask the elevated helper to shut down (Quit / update paths).
+    pub fn shutdown_for_exit(&self) {
+        let _ = self.stop();
+        crate::helper::helper_shutdown(&self.app_data);
     }
 
     pub fn stop(&self) -> AppResult<EngineStatus> {
@@ -487,40 +495,32 @@ impl ManagedEngine {
         }
 
         let via_helper = inner.via_helper;
+        let owned_pid = inner.child_pid;
         let app_data = self.app_data.clone();
+        let local = child_alive(&mut inner.child);
         drop(inner);
 
+        // Only our owned process counts — a foreign Flowseal winws must not paint Bypass Running.
         let alive = if via_helper {
             match crate::helper::helper_status(&app_data) {
                 Ok(st) => st.running,
-                Err(_) => process_running("winws.exe"),
+                Err(_) => owned_pid.is_some_and(process_pid_running),
             }
         } else {
-            let mut inner = self.inner.lock().expect("engine lock");
-            let local = child_alive(&mut inner.child);
-            drop(inner);
-            local || process_running("winws.exe")
+            local || owned_pid.is_some_and(process_pid_running)
         };
 
         let mut inner = self.inner.lock().expect("engine lock");
-        match (alive, inner.status.clone()) {
-            (true, EngineStatus::Stopped | EngineStatus::Error) => {
-                inner.status = EngineStatus::Running;
-                if inner.session_started_at.is_none() {
-                    inner.session_started_at = Some(now_iso());
-                    inner.uptime_anchor_secs = Some(chrono::Utc::now().timestamp());
-                }
-                inner.last_error = None;
-            }
-            (false, EngineStatus::Running) => {
-                inner.status = EngineStatus::Stopped;
-                inner.session_started_at = None;
-                inner.uptime_anchor_secs = None;
-                inner.child = None;
-                inner.child_pid = None;
-                inner.via_helper = false;
-            }
-            _ => {}
+        // Never promote Stopped→Running from OS scans (foreign Flowseal must not paint Bypass).
+        // Only demote when our owned process/helper child is gone.
+        let _ = (local, via_helper);
+        if !alive && matches!(inner.status, EngineStatus::Running) {
+            inner.status = EngineStatus::Stopped;
+            inner.session_started_at = None;
+            inner.uptime_anchor_secs = None;
+            inner.child = None;
+            inner.child_pid = None;
+            inner.via_helper = false;
         }
     }
 }

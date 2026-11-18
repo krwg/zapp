@@ -34,6 +34,7 @@ export const en = {
     checking: 'Checking…',
     unknown: 'Unknown',
     notChecked: 'Not checked',
+    stale: 'Stale',
     enabled: 'On',
     disabled: 'Off',
     working: 'Works',

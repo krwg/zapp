@@ -36,7 +36,34 @@ fn ensure_token(_app_data: &Path) -> Result<String, EngineFault> {
     })?;
     fs::write(&path, &token)
         .map_err(|e| EngineFault::new(FaultCode::Unknown, format!("cannot write token: {e}")))?;
+    harden_token_acl(&path);
     Ok(token)
+}
+
+fn harden_token_acl(path: &Path) {
+    #[cfg(windows)]
+    {
+        // Restrict helper.token to the current user (+ SYSTEM). Not a full security
+        // boundary for same-user processes, but blocks casual world-readable tokens.
+        let path_s = path.to_string_lossy().replace('\'', "''");
+        let script = format!(
+            "$p = '{path_s}'; \
+             icacls $p /inheritance:r | Out-Null; \
+             icacls $p /grant:r \"$env:USERNAME:(R)\" | Out-Null; \
+             icacls $p /grant:r \"SYSTEM:(F)\" | Out-Null"
+        );
+        let _ = Command::new("powershell")
+            .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+    }
 }
 
 fn request_with_timeout(
@@ -97,11 +124,17 @@ fn helper_auth_ok(token: &str) -> Result<bool, EngineFault> {
 fn kill_stale_helper() {
     #[cfg(windows)]
     {
+        // Only kill zapp-helper / our staged binary — never an unrelated owner of :39221.
         let script = format!(
             "$conns = Get-NetTCPConnection -LocalPort {HELPER_PORT} -ErrorAction SilentlyContinue; \
              foreach ($c in $conns) {{ \
-               if ($c.OwningProcess -and $c.OwningProcess -ne 0) {{ \
-                 Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue \
+               $procId = $c.OwningProcess; \
+               if (-not $procId -or $procId -eq 0) {{ continue }} \
+               $p = Get-Process -Id $procId -ErrorAction SilentlyContinue; \
+               if ($null -eq $p) {{ continue }} \
+               $name = $p.ProcessName; \
+               if ($name -eq 'zapp-helper' -or $name -eq 'zapp') {{ \
+                 Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue \
                }} \
              }}"
         );
@@ -360,4 +393,18 @@ pub fn helper_reset(app_data: &Path) -> Result<(), EngineFault> {
     } else {
         Err(EngineFault::new(FaultCode::StopFailed, res.message))
     }
+}
+
+/// Ask the elevated helper to exit (Quit / update). Best-effort; ignores missing helper.
+pub fn helper_shutdown(app_data: &Path) {
+    if !token_path().exists() {
+        return;
+    }
+    let Ok(token) = ensure_token(app_data) else {
+        return;
+    };
+    if !helper_auth_ok(&token).unwrap_or(false) {
+        return;
+    }
+    request_shutdown(&token);
 }

@@ -6,7 +6,10 @@ mod client;
 mod protocol;
 mod server;
 
-pub use client::{ensure_helper, helper_ping, helper_reset, helper_start, helper_status, helper_stop};
+pub use client::{
+    ensure_helper, helper_ping, helper_reset, helper_shutdown, helper_start, helper_status,
+    helper_stop,
+};
 pub use protocol::{HelperRequest, HelperResponse, HelperStatus};
 
 use std::path::PathBuf;

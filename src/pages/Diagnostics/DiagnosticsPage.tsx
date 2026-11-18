@@ -49,7 +49,8 @@ export function DiagnosticsPage() {
       <div className={page.stack}>
         <DiagnosticProgress
           run={diagnosticsLive}
-          busy={busy.diagnostics}
+          busy={!!busy['diagnostics:start']}
+          cancelBusy={!!busy['diagnostics:cancel']}
           mode={mode}
           onModeChange={(next) => void updateSettings({ diagnosticsMode: next })}
           onStart={() => void startDiagnostics()}

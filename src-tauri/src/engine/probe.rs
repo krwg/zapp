@@ -4,7 +4,7 @@
 
 use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -105,23 +105,39 @@ fn prefer_ipv4(addrs: impl IntoIterator<Item = SocketAddr>) -> Vec<SocketAddr> {
     }
 }
 
+fn resolve_host_timed(host: &str, port: u16, timeout: Duration) -> Vec<SocketAddr> {
+    let host_owned = host.to_string();
+    let label = format!("{host}:{port}");
+    let (tx, rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let addrs = format!("{host_owned}:{port}")
+            .to_socket_addrs()
+            .map(|i| prefer_ipv4(i))
+            .unwrap_or_default();
+        let _ = tx.send(addrs);
+    });
+    match rx.recv_timeout(timeout) {
+        Ok(addrs) => addrs,
+        Err(_) => {
+            log::warn!("DNS resolve timed out for {label} after {timeout:?}");
+            Vec::new()
+        }
+    }
+}
+
 /// Resolve DNS once before the strategy loop — DNS is strategy-independent.
 pub fn resolve_diag_targets(targets: &[DiagTarget]) -> Vec<ResolvedTarget> {
     let t0 = Instant::now();
+    let dns_budget = Duration::from_millis(1500);
     let resolved: Vec<ResolvedTarget> = targets
         .iter()
         .map(|target| {
-            let mut addrs: Vec<SocketAddr> = format!("{}:{}", target.host, target.port)
-                .to_socket_addrs()
-                .map(|i| prefer_ipv4(i))
-                .unwrap_or_default();
+            let mut addrs = resolve_host_timed(target.host, target.port, dns_budget);
             // Also resolve :443 for HTTPS hosts so resolve() has usable addrs.
             if target.https && target.port != 443 {
-                if let Ok(extra) = format!("{}:443", target.host).to_socket_addrs() {
-                    for a in prefer_ipv4(extra) {
-                        if !addrs.contains(&a) {
-                            addrs.push(a);
-                        }
+                for a in resolve_host_timed(target.host, 443, dns_budget) {
+                    if !addrs.contains(&a) {
+                        addrs.push(a);
                     }
                 }
             }
@@ -144,6 +160,16 @@ pub fn probe_tcp(host: &str, port: u16, timeout: Duration) -> ProbeResult {
 }
 
 fn probe_tcp_addrs(host: &str, port: u16, pre: &[SocketAddr], timeout: Duration) -> ProbeResult {
+    probe_tcp_addrs_abortable(host, port, pre, timeout, None)
+}
+
+fn probe_tcp_addrs_abortable(
+    host: &str,
+    port: u16,
+    pre: &[SocketAddr],
+    timeout: Duration,
+    abort: Option<&AtomicBool>,
+) -> ProbeResult {
     let start = Instant::now();
     let per_addr = timeout.min(Duration::from_millis(350));
     let resolved: Vec<SocketAddr> = if !pre.is_empty() {
@@ -152,18 +178,17 @@ fn probe_tcp_addrs(host: &str, port: u16, pre: &[SocketAddr], timeout: Duration)
         addrs.dedup();
         addrs
     } else {
-        match format!("{host}:{port}").to_socket_addrs() {
-            Ok(iter) => prefer_ipv4(iter),
-            Err(e) => {
-                return ProbeResult {
-                    ok: false,
-                    latency_ms: None,
-                    note: format!("DNS failed: {e}"),
-                    protocol: "tcp",
-                    weight: 1,
-                };
-            }
+        let addrs = resolve_host_timed(host, port, timeout.min(Duration::from_millis(1500)));
+        if addrs.is_empty() {
+            return ProbeResult {
+                ok: false,
+                latency_ms: None,
+                note: "DNS failed or timed out".into(),
+                protocol: "tcp",
+                weight: 1,
+            };
         }
+        addrs
     };
 
     if resolved.is_empty() {
@@ -177,7 +202,20 @@ fn probe_tcp_addrs(host: &str, port: u16, pre: &[SocketAddr], timeout: Duration)
     }
 
     for socket in &resolved {
-        match TcpStream::connect_timeout(socket, per_addr) {
+        if abort.is_some_and(|a| a.load(Ordering::Relaxed)) {
+            return ProbeResult {
+                ok: false,
+                latency_ms: None,
+                note: "Aborted".into(),
+                protocol: "tcp",
+                weight: 1,
+            };
+        }
+        let slice = per_addr.min(timeout.saturating_sub(start.elapsed()));
+        if slice.is_zero() {
+            break;
+        }
+        match TcpStream::connect_timeout(socket, slice) {
             Ok(_) => {
                 let ms = start.elapsed().as_millis().min(u32::MAX as u128) as u32;
                 return ProbeResult {
@@ -247,7 +285,28 @@ fn probe_tcp_ports_parallel(
     }
 }
 
+fn shared_https_client() -> &'static reqwest::blocking::Client {
+    static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::blocking::Client::builder()
+            .timeout(Duration::from_millis(1100))
+            .connect_timeout(Duration::from_millis(700))
+            .redirect(reqwest::redirect::Policy::none())
+            .no_proxy()
+            .pool_max_idle_per_host(4)
+            .user_agent("zapp/0.2")
+            .build()
+            .expect("https client")
+    })
+}
+
 fn build_https_client(host: &str, addrs: &[SocketAddr], timeout: Duration) -> Result<reqwest::blocking::Client, String> {
+    if addrs.is_empty() {
+        // Shared client is fine when we let the system resolver pick IPs.
+        let _ = timeout;
+        return Ok(shared_https_client().clone());
+    }
+
     let mut builder = reqwest::blocking::Client::builder()
         .timeout(timeout)
         .connect_timeout(timeout.min(Duration::from_millis(700)))
@@ -256,21 +315,19 @@ fn build_https_client(host: &str, addrs: &[SocketAddr], timeout: Duration) -> Re
         .pool_max_idle_per_host(0)
         .user_agent("zapp/0.2");
 
-    if !addrs.is_empty() {
-        // Map hostname → IPs so the URL keeps the real host (SNI/Host intact).
-        let https_addrs: Vec<SocketAddr> = prefer_ipv4(
-            addrs
-                .iter()
-                .filter(|a| a.port() == 443)
-                .copied()
-                .chain(addrs.iter().map(|a| SocketAddr::new(a.ip(), 443))),
-        );
-        let mut https_addrs = https_addrs;
-        https_addrs.sort_by_key(|a| a.ip().to_string());
-        https_addrs.dedup();
-        if !https_addrs.is_empty() {
-            builder = builder.resolve_to_addrs(host, &https_addrs);
-        }
+    // Map hostname → IPs so the URL keeps the real host (SNI/Host intact).
+    let https_addrs: Vec<SocketAddr> = prefer_ipv4(
+        addrs
+            .iter()
+            .filter(|a| a.port() == 443)
+            .copied()
+            .chain(addrs.iter().map(|a| SocketAddr::new(a.ip(), 443))),
+    );
+    let mut https_addrs = https_addrs;
+    https_addrs.sort_by_key(|a| a.ip().to_string());
+    https_addrs.dedup();
+    if !https_addrs.is_empty() {
+        builder = builder.resolve_to_addrs(host, &https_addrs);
     }
 
     builder.build().map_err(|e| e.to_string())
@@ -347,7 +404,21 @@ pub fn probe_matrix_host(host: &str, timeout: Duration) -> Vec<ProbeResult> {
     vec![tcp, https]
 }
 
-fn probe_matrix_resolved(resolved: &ResolvedTarget, timeout: Duration) -> Vec<ProbeResult> {
+fn probe_matrix_resolved(
+    resolved: &ResolvedTarget,
+    timeout: Duration,
+    abort: Option<&AtomicBool>,
+) -> Vec<ProbeResult> {
+    if abort.is_some_and(|a| a.load(Ordering::Relaxed)) {
+        return vec![ProbeResult {
+            ok: false,
+            latency_ms: None,
+            note: "Aborted".into(),
+            protocol: "skip",
+            weight: 1,
+        }];
+    }
+
     let target = &resolved.target;
     let addrs = &resolved.addrs;
 
@@ -364,7 +435,11 @@ fn probe_matrix_resolved(resolved: &ResolvedTarget, timeout: Duration) -> Vec<Pr
     }
 
     // HTTPS targets: skip redundant TCP — one TLS is enough.
-    let https_budget = timeout.min(Duration::from_millis(900));
+    let https_budget = if abort.is_some_and(|a| a.load(Ordering::Relaxed)) {
+        timeout.min(Duration::from_millis(250))
+    } else {
+        timeout.min(Duration::from_millis(900))
+    };
     vec![probe_https_addrs(target.host, addrs, https_budget)]
 }
 
@@ -411,7 +486,10 @@ pub fn probe_resolved_parallel(
                         }],
                     );
                 }
-                let probes = probe_matrix_resolved(item, timeout);
+                if cancelled(&ext) {
+                    abort.store(true, Ordering::Relaxed);
+                }
+                let probes = probe_matrix_resolved(item, timeout, Some(&abort));
                 let host_ok = score_probes(&probes) >= 55 || probes.iter().any(|p| p.ok);
                 // Early-cancel siblings when a critical host is clearly down.
                 if !host_ok && probes.iter().all(|p| !p.ok) {
@@ -461,7 +539,7 @@ pub fn probe_resolved_parallel(
             let mut handles = Vec::with_capacity(soft.len());
             for item in &soft {
                 handles.push(scope.spawn(move || {
-                    let probes = probe_matrix_resolved(item, timeout);
+                    let probes = probe_matrix_resolved(item, timeout, None);
                     (item.target, probes)
                 }));
             }

@@ -14,7 +14,7 @@ mod tray;
 mod util;
 
 use state::AppState;
-use tauri::{Emitter, Manager, WindowEvent};
+use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 
 const ARG_MINIMIZED: &str = "--minimized";
 
@@ -136,7 +136,8 @@ pub fn run() {
                         Ok(true) => {
                             log::info!("application installer launched — exiting for update");
                             let _ = handle.emit("app:quit-for-update", ());
-                            std::thread::sleep(std::time::Duration::from_millis(900));
+                            state.engine.shutdown_for_exit();
+                            std::thread::sleep(std::time::Duration::from_millis(400));
                             handle.exit(0);
                         }
                         Ok(false) => {
@@ -167,6 +168,13 @@ pub fn run() {
             commands::run_preflight,
             commands::reset_engine,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running zapp");
+        .build(tauri::generate_context!())
+        .expect("error while building zapp")
+        .run(|app, event| {
+            if matches!(event, RunEvent::Exit | RunEvent::ExitRequested { .. }) {
+                if let Some(state) = app.try_state::<AppState>() {
+                    state.engine.shutdown_for_exit();
+                }
+            }
+        });
 }

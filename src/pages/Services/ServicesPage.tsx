@@ -2,7 +2,7 @@
 // ║           pages/Services/ServicesPage            ║
 // ╚════════════════════════════════════════════════════╝
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { RefreshCw } from 'lucide-react'
 import { ServiceCard } from '@/components/domain/ServiceCard/ServiceCard'
 import { PageHeader } from '@/components/layout/PageHeader/PageHeader'
@@ -13,14 +13,25 @@ import { Dialog } from '@/components/ui/Dialog/Dialog'
 import { StatusBadge } from '@/components/ui/StatusBadge/StatusBadge'
 import { useAppState } from '@/context/AppStateContext'
 import { useLocale } from '@/context/LocaleContext'
-import type { MonitoredService, ServiceCheckHistoryItem } from '@/types'
+import type { ServiceCheckHistoryItem } from '@/types'
 import { formatDateTime, formatLatency } from '@/utils/format'
 import page from '../shared/page.module.css'
 
 export function ServicesPage() {
   const { snapshot, checkService, checkAllServices, busy } = useAppState()
   const { t, locale } = useLocale()
-  const [selected, setSelected] = useState<MonitoredService | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const selected =
+    selectedId && snapshot
+      ? (snapshot.services.find((s) => s.id === selectedId) ?? null)
+      : null
+
+  useEffect(() => {
+    if (!selectedId || !snapshot) return
+    if (!snapshot.services.some((s) => s.id === selectedId)) {
+      setSelectedId(null)
+    }
+  }, [selectedId, snapshot])
 
   if (!snapshot) return null
 
@@ -89,7 +100,7 @@ export function ServicesPage() {
                 busy={busy[`service:${service.id}`]}
                 onCheck={() => void checkService(service.id)}
               />
-              <Button size="sm" variant="ghost" onClick={() => setSelected(service)}>
+              <Button size="sm" variant="ghost" onClick={() => setSelectedId(service.id)}>
                 {t('common.details')}
               </Button>
             </div>
@@ -101,10 +112,10 @@ export function ServicesPage() {
         open={!!selected}
         title={selected?.name ?? ''}
         description={selected ? `${selected.host} · ${selected.diagnosticSummary}` : undefined}
-        onClose={() => setSelected(null)}
+        onClose={() => setSelectedId(null)}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setSelected(null)}>
+            <Button variant="ghost" onClick={() => setSelectedId(null)}>
               {t('common.close')}
             </Button>
             {selected && (

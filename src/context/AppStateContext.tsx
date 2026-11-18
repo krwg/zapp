@@ -8,6 +8,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react'
@@ -16,6 +17,7 @@ import type {
   AppSettings,
   AppSnapshot,
   DiagnosticRun,
+  EngineStatus,
   MonitoredService,
   Profile,
   UpdateChannel,
@@ -40,14 +42,39 @@ interface AppStateContextValue {
   checkUpdates: () => Promise<void>
   updateChannel: (id: UpdateChannel['id']) => Promise<void>
   updatesLive: UpdateChannel[]
-  updateSettings: (patch: Partial<AppSettings>) => Promise<void>
+  updateSettings: (patch: Partial<AppSettings>, opts?: { quiet?: boolean }) => Promise<void>
   busy: Record<string, boolean>
 }
 
 const AppStateContext = createContext<AppStateContextValue | null>(null)
 
+const TRANSITIONAL: EngineStatus[] = ['starting', 'stopping']
+
+function mergeSnapshot(prev: AppSnapshot | null, next: AppSnapshot): AppSnapshot {
+  if (!prev) return next
+
+  let connection = next.connection
+  if (
+    TRANSITIONAL.includes(prev.connection.status) &&
+    (next.connection.status === 'stopped' || next.connection.status === 'running')
+  ) {
+    // Keep optimistic starting/stopping until the action settles.
+    connection = { ...next.connection, status: prev.connection.status }
+  }
+
+  const services = next.services.map((s) => {
+    const old = prev.services.find((p) => p.id === s.id)
+    if (old?.status === 'checking' && s.status !== 'checking') {
+      return { ...s, status: 'checking' as const }
+    }
+    return s
+  })
+
+  return { ...next, connection, services }
+}
+
 export function AppStateProvider({ children }: { children: ReactNode }) {
-  const api = getApi()
+  const api = useMemo(() => getApi(), [])
   const { push } = useToast()
   const { setMode } = useTheme()
   const { t } = useLocale()
@@ -56,10 +83,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [diagnosticsLive, setDiagnosticsLive] = useState<DiagnosticRun | null>(null)
   const [updatesLive, setUpdatesLive] = useState<UpdateChannel[]>([])
   const [busy, setBusy] = useState<Record<string, boolean>>({})
+  const engineActionRef = useRef(0)
+  const checkingIdsRef = useRef<Set<string>>(new Set())
 
   const refresh = useCallback(async () => {
     const data = await api.getSnapshot()
-    setSnapshot(data)
+    setSnapshot((prev) => mergeSnapshot(prev, data))
     setDiagnosticsLive(data.diagnostics)
     setUpdatesLive(data.updates)
     setMode(data.settings.appearance)
@@ -80,7 +109,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         try {
           await refresh()
         } catch {
-          
+          /* keep UI */
         }
       } finally {
         setBusy((prev) => ({ ...prev, [key]: false }))
@@ -133,7 +162,23 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           const snap = await api.getSnapshot()
           setDiagnosticsLive(snap.diagnostics)
           setUpdatesLive(snap.updates)
-          setSnapshot(snap)
+          setSnapshot((prev) => {
+            let merged = mergeSnapshot(prev, snap)
+            // Drop transitional once engine action finished and server agrees.
+            if (
+              prev &&
+              TRANSITIONAL.includes(prev.connection.status) &&
+              engineActionRef.current === 0 &&
+              !TRANSITIONAL.includes(snap.connection.status)
+            ) {
+              merged = { ...merged, connection: snap.connection }
+            }
+            // Drop checking once individual checks cleared.
+            if (checkingIdsRef.current.size === 0) {
+              return { ...merged, services: snap.services }
+            }
+            return merged
+          })
         } catch {
           /* keep last UI state */
         }
@@ -146,34 +191,42 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!snapshot) return
     const running = snapshot.connection.status === 'running'
     await withBusy('engine', async () => {
-      setSnapshot((prev) =>
-        prev
-          ? {
-              ...prev,
-              connection: {
-                ...prev.connection,
-                status: running ? 'stopping' : 'starting',
-              },
-            }
-          : prev,
-      )
-      const status = await api.setEngineRunning(!running)
-      await refresh()
-      if (status === 'running') {
-        push({
-          title: t('toast.protectionOnTitle'),
-          description: t('toast.protectionOnDesc'),
-          tone: 'success',
-        })
-      } else {
-        push({
-          title: t('toast.protectionOffTitle'),
-          description: t('toast.protectionOffDesc'),
-          tone: 'success',
-        })
+      engineActionRef.current += 1
+      try {
+        setSnapshot((prev) =>
+          prev
+            ? {
+                ...prev,
+                connection: {
+                  ...prev.connection,
+                  status: running ? 'stopping' : 'starting',
+                },
+              }
+            : prev,
+        )
+        const status = await api.setEngineRunning(!running)
+        const data = await api.getSnapshot()
+        setSnapshot(data)
+        setDiagnosticsLive(data.diagnostics)
+        setUpdatesLive(data.updates)
+        if (status === 'running') {
+          push({
+            title: t('toast.protectionOnTitle'),
+            description: t('toast.protectionOnDesc'),
+            tone: 'success',
+          })
+        } else {
+          push({
+            title: t('toast.protectionOffTitle'),
+            description: t('toast.protectionOffDesc'),
+            tone: 'success',
+          })
+        }
+      } finally {
+        engineActionRef.current = Math.max(0, engineActionRef.current - 1)
       }
     })
-  }, [api, push, refresh, snapshot, t, withBusy])
+  }, [api, push, snapshot, t, withBusy])
 
   const resetEngine = useCallback(async () => {
     await withBusy('engine', async () => {
@@ -203,7 +256,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   )
 
   const startDiagnostics = useCallback(async () => {
-    await withBusy('diagnostics', async () => {
+    await withBusy('diagnostics:start', async () => {
       const run = await api.startDiagnostics()
       setDiagnosticsLive(run)
       const queued = (run.currentStrategy ?? '').toLowerCase().includes('busy')
@@ -216,7 +269,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   }, [api, push, t, withBusy])
 
   const cancelDiagnostics = useCallback(async () => {
-    await withBusy('diagnostics', async () => {
+    await withBusy('diagnostics:cancel', async () => {
       const run = await api.cancelDiagnostics()
       setDiagnosticsLive(run)
       push({
@@ -245,28 +298,33 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const checkService = useCallback(
     async (id: string) => {
       await withBusy(`service:${id}`, async () => {
-        setSnapshot((prev) => {
-          if (!prev) return prev
-          return {
-            ...prev,
-            services: prev.services.map((s) =>
-              s.id === id ? { ...s, status: 'checking' as const } : s,
-            ),
-          }
-        })
-        const updated = await api.checkService(id)
-        setSnapshot((prev) => {
-          if (!prev) return prev
-          return {
-            ...prev,
-            services: prev.services.map((s) => (s.id === id ? updated : s)),
-          }
-        })
-        push({
-          title: t('toast.siteCheckTitle'),
-          description: t('toast.siteCheckDesc', { name: updated.name }),
-          tone: 'success',
-        })
+        checkingIdsRef.current.add(id)
+        try {
+          setSnapshot((prev) => {
+            if (!prev) return prev
+            return {
+              ...prev,
+              services: prev.services.map((s) =>
+                s.id === id ? { ...s, status: 'checking' as const } : s,
+              ),
+            }
+          })
+          const updated = await api.checkService(id)
+          setSnapshot((prev) => {
+            if (!prev) return prev
+            return {
+              ...prev,
+              services: prev.services.map((s) => (s.id === id ? updated : s)),
+            }
+          })
+          push({
+            title: t('toast.siteCheckTitle'),
+            description: t('toast.siteCheckDesc', { name: updated.name }),
+            tone: 'success',
+          })
+        } finally {
+          checkingIdsRef.current.delete(id)
+        }
       })
     },
     [api, push, t, withBusy],
@@ -313,36 +371,56 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const updateChannel = useCallback(
     async (id: UpdateChannel['id']) => {
       await withBusy(`update:${id}`, async () => {
-        const poll = window.setInterval(() => {
-          void api.getUpdates().then(setUpdatesLive).catch(() => undefined)
-        }, 200)
-        try {
-          await api.updateChannel(id)
-          await refresh()
-          push({
-            title: t('toast.channelUpdatedTitle', { id }),
-            description: t('toast.channelUpdatedDesc'),
-            tone: 'success',
-          })
-        } finally {
-          window.clearInterval(poll)
-        }
+        await api.updateChannel(id)
+        // Download/install runs in the backend; poll until settled.
+        await new Promise<void>((resolve, reject) => {
+          const started = Date.now()
+          const poll = window.setInterval(() => {
+            void api
+              .getUpdates()
+              .then((list) => {
+                setUpdatesLive(list)
+                const ch = list.find((c) => c.id === id)
+                if (!ch) return
+                if (ch.status === 'downloading' || ch.status === 'installing') return
+                window.clearInterval(poll)
+                if (ch.status === 'error') {
+                  reject(new Error(ch.releaseNotes || t('common.unknownError')))
+                  return
+                }
+                resolve()
+              })
+              .catch(() => undefined)
+            if (Date.now() - started > 10 * 60 * 1000) {
+              window.clearInterval(poll)
+              reject(new Error(t('common.unknownError')))
+            }
+          }, 200)
+        })
+        await refresh()
+        push({
+          title: t('toast.channelUpdatedTitle', { id }),
+          description: t('toast.channelUpdatedDesc'),
+          tone: 'success',
+        })
       })
     },
     [api, push, refresh, t, withBusy],
   )
 
   const updateSettings = useCallback(
-    async (patch: Partial<AppSettings>) => {
+    async (patch: Partial<AppSettings>, opts?: { quiet?: boolean }) => {
       await withBusy('settings', async () => {
         const next = await api.updateSettings(patch)
         if (patch.appearance) setMode(patch.appearance)
         setSnapshot((prev) => (prev ? { ...prev, settings: next } : prev))
-        push({
-          title: t('toast.settingsSavedTitle'),
-          description: t('toast.settingsSavedDesc'),
-          tone: 'success',
-        })
+        if (!opts?.quiet) {
+          push({
+            title: t('toast.settingsSavedTitle'),
+            description: t('toast.settingsSavedDesc'),
+            tone: 'success',
+          })
+        }
       })
     },
     [api, push, setMode, t, withBusy],
@@ -407,7 +485,7 @@ function formatInvokeError(err: unknown, fallback: string): string {
     try {
       return JSON.stringify(err)
     } catch {
-      
+      /* fall through */
     }
   }
   return fallback

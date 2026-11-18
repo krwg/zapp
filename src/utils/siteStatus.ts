@@ -21,8 +21,24 @@ export function displaySiteStatus(
   now = Date.now(),
 ): AvailabilityStatus {
   if (service.status === 'checking') return 'checking'
-  const bypassOn = engineStatus === 'running' || engineStatus === 'starting'
+  const bypassOn = engineStatus === 'running'
   if (!bypassOn) return 'unknown'
   if (!isSiteCheckFresh(service.lastCheckedAt, now)) return 'unknown'
   return service.status
+}
+
+/** i18n key for grey site rows: never checked vs stale probe. */
+export function siteStatusLabelKey(
+  service: MonitoredService,
+  engineStatus: EngineStatus,
+  now = Date.now(),
+): 'status.checking' | 'status.available' | 'status.unavailable' | 'status.notChecked' | 'status.stale' {
+  const shown = displaySiteStatus(service, engineStatus, now)
+  if (shown === 'checking') return 'status.checking'
+  if (shown === 'available') return 'status.available'
+  if (shown === 'unavailable') return 'status.unavailable'
+  if (!service.lastCheckedAt) return 'status.notChecked'
+  if (engineStatus !== 'running') return 'status.notChecked'
+  if (!isSiteCheckFresh(service.lastCheckedAt, now)) return 'status.stale'
+  return 'status.notChecked'
 }

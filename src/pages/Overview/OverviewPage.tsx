@@ -13,11 +13,10 @@ import { StatusBadge } from '@/components/ui/StatusBadge/StatusBadge'
 
 import { useAppState } from '@/context/AppStateContext'
 import { useLocale } from '@/context/LocaleContext'
-import type { AvailabilityStatus } from '@/types'
 import { formatDateTime, formatLatency, formatRelative } from '@/utils/format'
 import { sourceLabelKey } from '@/utils/modeLabels'
 import { serviceIcon } from '@/utils/serviceIcons'
-import { displaySiteStatus, isSiteCheckFresh } from '@/utils/siteStatus'
+import { displaySiteStatus, isSiteCheckFresh, siteStatusLabelKey } from '@/utils/siteStatus'
 import { formatVersion } from '@/utils/version'
 import page from '../shared/page.module.css'
 import styles from './OverviewPage.module.css'
@@ -94,16 +93,17 @@ export function OverviewPage() {
     return parts.join(' · ')
   })()
 
-  const statusTone = (status: AvailabilityStatus) => {
-    switch (status) {
-      case 'available':
-        return { label: t('status.available'), tone: 'success' as const }
-      case 'unavailable':
-        return { label: t('status.unavailable'), tone: 'error' as const }
-      case 'checking':
-        return { label: t('status.checking'), tone: 'warning' as const, pulse: true }
+  const statusTone = (service: (typeof services)[number]) => {
+    const key = siteStatusLabelKey(service, connection.status)
+    switch (key) {
+      case 'status.available':
+        return { label: t(key), tone: 'success' as const }
+      case 'status.unavailable':
+        return { label: t(key), tone: 'error' as const }
+      case 'status.checking':
+        return { label: t(key), tone: 'warning' as const, pulse: true }
       default:
-        return { label: t('status.notChecked'), tone: 'neutral' as const }
+        return { label: t(key), tone: 'neutral' as const }
     }
   }
 
@@ -216,10 +216,11 @@ export function OverviewPage() {
           <div className={styles.siteList}>
             {services.map((service) => {
               const shown = displaySiteStatus(service, connection.status)
-              const st = statusTone(shown)
+              const st = statusTone(service)
               const icon = serviceIcon(service.name) ?? serviceIcon(service.host)
               const fresh =
                 connection.status === 'running' && isSiteCheckFresh(service.lastCheckedAt)
+              const metaKey = siteStatusLabelKey(service, connection.status)
               return (
                 <button
                   key={service.id}
@@ -246,7 +247,7 @@ export function OverviewPage() {
                     <div className={styles.siteStats}>
                       {fresh
                         ? `${formatLatency(service.latencyMs)} · ${formatRelative(service.lastCheckedAt, locale)}`
-                        : t('status.notChecked')}
+                        : t(metaKey)}
                     </div>
                   </div>
                 </button>

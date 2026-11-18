@@ -106,6 +106,29 @@ impl UpdateManager {
         }
     }
 
+    pub fn mark_downloading(&self, id: UpdateChannelId) -> AppResult<()> {
+        let mut channels = self.channels.lock().unwrap_or_else(|e| e.into_inner());
+        let channel = channels
+            .iter_mut()
+            .find(|c| c.id == id)
+            .ok_or_else(|| AppError::from("Update channel not found"))?;
+        if channel.status == UpdateChannelStatus::UpToDate {
+            return Ok(());
+        }
+        channel.status = UpdateChannelStatus::Downloading;
+        channel.download_progress = Some(0);
+        Ok(())
+    }
+
+    pub fn mark_error(&self, id: UpdateChannelId, message: String) {
+        let mut channels = self.channels.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(channel) = channels.iter_mut().find(|c| c.id == id) {
+            channel.status = UpdateChannelStatus::Error;
+            channel.download_progress = None;
+            channel.release_notes = message;
+        }
+    }
+
     /// First-run / repair: download Flowseal pack even if channel looks up-to-date.
     pub fn ensure_engine_installed(
         &self,

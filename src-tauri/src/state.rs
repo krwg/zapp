@@ -254,9 +254,13 @@ impl AppState {
     }
 
     pub fn cancel_diagnostics(&self) -> AppResult<DiagnosticRun> {
-        // Only flip the cancel flag; the worker restores engine/profile state and emits Cancelled.
+        // Flip cancel and drop any queued restart — Cancel must not auto-start again.
         self.cancel_diagnostics_flag();
-        let mut store = self.inner.lock().expect("state lock");
+        *self
+            .diag_pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = None;
+        let mut store = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if matches!(
             store.diagnostics.phase,
             DiagnosticPhase::Preparing

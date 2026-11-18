@@ -36,6 +36,7 @@ export const ru: MessageTree = {
     checking: 'Проверка…',
     unknown: 'Неизвестно',
     notChecked: 'Не проверено',
+    stale: 'Устарело',
     enabled: 'Вкл',
     disabled: 'Выкл',
     working: 'Работает',

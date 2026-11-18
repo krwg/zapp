@@ -9,7 +9,7 @@ import { useAppState } from '@/context/AppStateContext'
 import { useLocale } from '@/context/LocaleContext'
 import type { MonitoredService } from '@/types'
 import { formatLatency, formatRelative } from '@/utils/format'
-import { displaySiteStatus, isSiteCheckFresh } from '@/utils/siteStatus'
+import { displaySiteStatus, isSiteCheckFresh, siteStatusLabelKey } from '@/utils/siteStatus'
 import styles from './ServiceCard.module.css'
 
 interface ServiceCardProps {
@@ -26,16 +26,17 @@ export function ServiceCard({ service, busy, onCheck, compact }: ServiceCardProp
   const shown = displaySiteStatus(service, engineStatus)
   const fresh = engineStatus === 'running' && isSiteCheckFresh(service.lastCheckedAt)
 
+  const labelKey = siteStatusLabelKey(service, engineStatus)
   const status = ((): { label: string; tone: StatusTone; pulse?: boolean } => {
-    switch (shown) {
-      case 'available':
-        return { label: t('status.available'), tone: 'success' }
-      case 'unavailable':
-        return { label: t('status.unavailable'), tone: 'error' }
-      case 'checking':
-        return { label: t('status.checking'), tone: 'warning', pulse: true }
+    switch (labelKey) {
+      case 'status.available':
+        return { label: t(labelKey), tone: 'success' }
+      case 'status.unavailable':
+        return { label: t(labelKey), tone: 'error' }
+      case 'status.checking':
+        return { label: t(labelKey), tone: 'warning', pulse: true }
       default:
-        return { label: t('status.notChecked'), tone: 'neutral' }
+        return { label: t(labelKey), tone: 'neutral' }
     }
   })()
 
@@ -57,7 +58,7 @@ export function ServiceCard({ service, busy, onCheck, compact }: ServiceCardProp
         <div className={styles.meta}>
           {fresh
             ? `${formatLatency(service.latencyMs)} · ${formatRelative(service.lastCheckedAt, locale)}`
-            : t('status.notChecked')}
+            : t(labelKey)}
         </div>
         <Button size="sm" variant="ghost" onClick={onCheck} disabled={busy || service.status === 'checking'}>
           <RefreshCw size={14} />

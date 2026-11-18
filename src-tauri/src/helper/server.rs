@@ -49,6 +49,9 @@ pub fn serve() -> Result<(), String> {
 
     for conn in listener.incoming() {
         let Ok(mut stream) = conn else { continue };
+        // One hung client without a newline must not freeze the elevated helper forever.
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
+        let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
         let mut reader = BufReader::new(stream.try_clone().map_err(|e| e.to_string())?);
         let mut line = String::new();
         if reader.read_line(&mut line).is_err() {

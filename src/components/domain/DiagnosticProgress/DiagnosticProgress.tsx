@@ -12,6 +12,8 @@ import styles from './DiagnosticProgress.module.css'
 interface DiagnosticProgressProps {
   run: DiagnosticRun
   busy?: boolean
+  /** Separate from start so Cancel stays clickable while a start invoke is in flight. */
+  cancelBusy?: boolean
   mode: DiagnosticsMode
   onModeChange: (mode: DiagnosticsMode) => void
   onStart: () => void
@@ -40,6 +42,7 @@ function phaseText(phase: DiagnosticPhase, t: (key: MessageKey) => string): stri
 export function DiagnosticProgress({
   run,
   busy,
+  cancelBusy,
   mode,
   onModeChange,
   onStart,
@@ -116,7 +119,7 @@ export function DiagnosticProgress({
 
         <div className={styles.actions}>
           {running ? (
-            <Button variant="danger" onClick={onCancel} disabled={busy}>
+            <Button variant="danger" onClick={onCancel} disabled={!!cancelBusy}>
               <CircleStop size={15} strokeWidth={2} />
               {t('smartCheck.cancel')}
             </Button>

@@ -87,6 +87,34 @@ pub fn run_diagnostics_worker(
     cancel: Arc<Mutex<bool>>,
     prefer_previous: bool,
 ) {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run_diagnostics_worker_inner(app.clone(), run_id.clone(), cancel.clone(), prefer_previous)
+    }));
+    if let Err(payload) = result {
+        let msg = if let Some(s) = payload.downcast_ref::<&str>() {
+            (*s).to_string()
+        } else if let Some(s) = payload.downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "Smart check panicked".into()
+        };
+        log::error!("diagnostics worker panic: {msg}");
+        if let Some(state) = app.try_state::<AppState>() {
+            let snapshot = Snapshot {
+                was_running: false,
+                previous: state.engine.active_strategy(),
+            };
+            fail_run(&app, &state, &run_id, &cancel, &snapshot, &msg);
+        }
+    }
+}
+
+fn run_diagnostics_worker_inner(
+    app: AppHandle,
+    run_id: String,
+    cancel: Arc<Mutex<bool>>,
+    prefer_previous: bool,
+) {
     let Some(state) = app.try_state::<AppState>() else {
         return;
     };

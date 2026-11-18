@@ -2,7 +2,7 @@
 // ║                     commands                     ║
 // ╚════════════════════════════════════════════════════╝
 
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::error::AppResult;
 use crate::model::*;
@@ -12,7 +12,10 @@ fn quit_after_installer(app: &AppHandle) {
     let _ = app.emit("app:quit-for-update", ());
     let handle = app.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(900));
+        if let Some(state) = handle.try_state::<AppState>() {
+            state.engine.shutdown_for_exit();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(400));
         handle.exit(0);
     });
 }
@@ -96,21 +99,60 @@ pub fn check_updates(state: State<'_, AppState>) -> AppResult<Vec<UpdateChannel>
     state.check_updates()
 }
 
+/// Starts the channel update on a background thread and returns immediately while
+/// status is Downloading / Installing (UI polls `get_updates`).
 #[tauri::command]
 pub fn update_channel(
     app: AppHandle,
     state: State<'_, AppState>,
     channel_id: UpdateChannelId,
 ) -> AppResult<UpdateChannel> {
-    let (channel, restart) = state.update_channel(channel_id)?;
-    if restart {
-        state.history.push(
-            "updates",
-            "Application installer launched — quitting so files can update",
-        );
-        quit_after_installer(&app);
+    let current = state
+        .updates
+        .list()
+        .into_iter()
+        .find(|c| c.id == channel_id)
+        .ok_or_else(|| crate::error::AppError::from("Update channel not found"))?;
+
+    if matches!(
+        current.status,
+        UpdateChannelStatus::Downloading | UpdateChannelStatus::Installing
+    ) {
+        return Ok(current);
     }
-    Ok(channel)
+
+    // Mark Downloading synchronously so the first UI poll sees progress.
+    state.updates.mark_downloading(channel_id.clone())?;
+
+    let handle = app.clone();
+    let id_for_worker = channel_id.clone();
+    std::thread::spawn(move || {
+        let Some(state) = handle.try_state::<AppState>() else {
+            return;
+        };
+        match state.update_channel(id_for_worker.clone()) {
+            Ok((_channel, restart)) => {
+                if restart {
+                    state.history.push(
+                        "updates",
+                        "Application installer launched — quitting so files can update",
+                    );
+                    quit_after_installer(&handle);
+                }
+            }
+            Err(e) => {
+                log::warn!("update_channel({id_for_worker:?}) failed: {e}");
+                state.updates.mark_error(id_for_worker, e.to_string());
+            }
+        }
+    });
+
+    Ok(state
+        .updates
+        .list()
+        .into_iter()
+        .find(|c| c.id == channel_id)
+        .unwrap_or(current))
 }
 
 #[tauri::command]
