@@ -41,6 +41,11 @@ function channelCopy(
         title: t('updates.channels.strategies'),
         description: t('updates.channels.strategiesDesc'),
       }
+    case 'telegramProxy':
+      return {
+        title: t('updates.channels.telegramProxy'),
+        description: t('updates.channels.telegramProxyDesc'),
+      }
   }
 }
 

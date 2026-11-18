@@ -137,13 +137,39 @@ pub struct SystemInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DiagnosticHostDetail {
+    pub host: String,
+    pub service: String,
+    pub ok: bool,
+    pub latency_ms: Option<u32>,
+    pub note: String,
+    pub critical: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticServiceScore {
+    pub service: String,
+    pub score: u32,
+    pub ok: bool,
+    pub latency_ms: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DiagnosticStrategyResult {
     pub id: String,
     pub name: String,
     pub strategy_type: String,
     pub success: bool,
+    /// Best (min) critical latency — shown as Response in the collapsed UI.
     pub latency_ms: Option<u32>,
+    pub latency_median_ms: Option<u32>,
+    pub latency_max_ms: Option<u32>,
     pub score: u32,
+    pub soft_score: u32,
+    pub services: Vec<DiagnosticServiceScore>,
+    pub hosts: Vec<DiagnosticHostDetail>,
     pub notes: String,
     pub tested_at: String,
 }
@@ -170,6 +196,21 @@ pub enum UpdateChannelId {
     Application,
     Engine,
     Strategies,
+    TelegramProxy,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TelegramProxyState {
+    pub status: EngineStatus,
+    pub installed: bool,
+    pub version: String,
+    pub host: String,
+    pub port: u16,
+    pub session_started_at: Option<String>,
+    pub uptime_seconds: u64,
+    pub last_error: Option<String>,
+    pub proxy_link: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -212,6 +253,8 @@ pub struct AppSettings {
     pub advanced_logging: bool,
     pub engine_path: Option<String>,
     pub strategies_path: Option<String>,
+    pub telegram_proxy_enabled: bool,
+    pub telegram_offer_link_on_start: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -229,6 +272,7 @@ pub struct AppAbout {
 #[serde(rename_all = "camelCase")]
 pub struct AppSnapshot {
     pub connection: ConnectionState,
+    pub telegram: TelegramProxyState,
     pub active_profile: Option<Profile>,
     pub profiles: Vec<Profile>,
     pub services: Vec<MonitoredService>,
@@ -255,4 +299,6 @@ pub struct SettingsPatch {
     pub advanced_logging: Option<bool>,
     pub engine_path: Option<Option<String>>,
     pub strategies_path: Option<Option<String>>,
+    pub telegram_proxy_enabled: Option<bool>,
+    pub telegram_offer_link_on_start: Option<bool>,
 }

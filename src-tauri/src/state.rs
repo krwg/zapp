@@ -11,7 +11,7 @@ use tauri::{AppHandle, Manager};
 use crate::diagnostics::run_diagnostics_worker;
 use crate::engine::{
     is_elevated, probe_tcp, resolve_engine_layout, scan_strategy_profiles, ManagedEngine,
-    UpdateManager,
+    ManagedTgProxy, UpdateManager,
 };
 use crate::error::{AppError, AppResult};
 use crate::history::HistoryLog;
@@ -20,6 +20,7 @@ use crate::util::{new_id, now_iso};
 
 pub struct AppState {
     pub engine: ManagedEngine,
+    pub tg_proxy: ManagedTgProxy,
     pub updates: UpdateManager,
     pub history: HistoryLog,
     pub(crate) inner: Mutex<Store>,
@@ -52,18 +53,25 @@ impl AppState {
         if let Some(active) = profiles.iter().find(|p| p.is_active) {
             engine.set_active_strategy(active.name.clone());
         }
-        Self::assemble(app_data, engine, engine_version, profiles)
+        let tg_proxy = ManagedTgProxy::new(app_data.clone());
+        Self::assemble(app_data, engine, tg_proxy, engine_version, profiles)
     }
 
     fn assemble(
         app_data: std::path::PathBuf,
         engine: ManagedEngine,
+        tg_proxy: ManagedTgProxy,
         engine_version: String,
         profiles: Vec<Profile>,
     ) -> Self {
-        let updates = UpdateManager::new(seed_updates(&engine_version), app_data.clone());
+        let tg_version = tg_proxy.version();
+        let updates = UpdateManager::new(
+            seed_updates(&engine_version, &tg_version),
+            app_data.clone(),
+        );
         Self {
             engine,
+            tg_proxy,
             updates,
             history: HistoryLog::open(app_data),
             diag_cancel: Mutex::new(None),
@@ -89,7 +97,6 @@ impl AppState {
     }
 
     pub fn snapshot(&self) -> AppSnapshot {
-        
         let status = self.engine.status();
         if !matches!(
             status,
@@ -99,7 +106,7 @@ impl AppState {
         }
 
         let mut store = self.inner.lock().expect("state lock");
-        
+
         if !store.system.elevated {
             store.system.elevated = is_elevated();
         }
@@ -116,6 +123,7 @@ impl AppState {
                 uptime_seconds: self.engine.uptime_seconds(),
                 last_error: self.engine.last_error(),
             },
+            telegram: self.tg_proxy.snapshot_state(),
             active_profile: active,
             profiles: store.profiles.clone(),
             services: store.services.clone(),
@@ -273,8 +281,13 @@ impl AppState {
     }
 
     fn cancel_diagnostics_flag(&self) {
-        if let Some(flag) = self.diag_cancel.lock().expect("cancel lock").as_ref() {
-            *flag.lock().expect("flag") = true;
+        if let Some(flag) = self
+            .diag_cancel
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
+            *flag.lock().unwrap_or_else(|e| e.into_inner()) = true;
         }
     }
 
@@ -332,7 +345,7 @@ impl AppState {
     }
 
     pub fn check_service(&self, service_id: &str) -> AppResult<MonitoredService> {
-        let (host, timeout_ms) = {
+        let (host, timeout_ms, is_telegram) = {
             let mut store = self.inner.lock().expect("state lock");
             let service = store
                 .services
@@ -340,10 +353,17 @@ impl AppState {
                 .find(|s| s.id == service_id)
                 .ok_or_else(|| AppError::from("Service not found"))?;
             service.status = AvailabilityStatus::Checking;
-            (service.host.clone(), store.settings.network_timeout_ms)
+            let is_tg = service.id == "svc-telegram";
+            (service.host.clone(), store.settings.network_timeout_ms, is_tg)
         };
 
-        let probe = probe_tcp(&host, 443, Duration::from_millis(timeout_ms.max(1000) as u64));
+        let probe = if is_telegram {
+            let port = self.tg_proxy.port();
+            let host = self.tg_proxy.host();
+            probe_tcp(&host, port, Duration::from_millis(timeout_ms.max(800) as u64))
+        } else {
+            probe_tcp(&host, 443, Duration::from_millis(timeout_ms.max(1000) as u64))
+        };
 
         let mut store = self.inner.lock().expect("state lock");
         let service = store
@@ -355,7 +375,13 @@ impl AppState {
         service.status = probe.status();
         service.latency_ms = probe.latency_ms;
         service.last_checked_at = Some(now_iso());
-        service.diagnostic_summary = if probe.ok {
+        service.diagnostic_summary = if is_telegram {
+            if probe.ok {
+                format!("Local Telegram proxy listening. {}", probe.note)
+            } else {
+                format!("Local Telegram proxy not listening. {}", probe.note)
+            }
+        } else if probe.ok {
             format!("Available. {}", probe.note)
         } else {
             format!("Unavailable. {}", probe.note)
@@ -375,7 +401,9 @@ impl AppState {
     }
 
     pub fn check_all_services(&self) -> AppResult<Vec<MonitoredService>> {
-        let jobs: Vec<(String, String, u64)> = {
+        let tg_host = self.tg_proxy.host();
+        let tg_port = self.tg_proxy.port();
+        let jobs: Vec<(String, String, u16, u64, bool)> = {
             let mut store = self.inner.lock().expect("state lock");
             let timeout_ms = store.settings.network_timeout_ms.max(1000) as u64;
             store
@@ -383,21 +411,23 @@ impl AppState {
                 .iter_mut()
                 .map(|s| {
                     s.status = AvailabilityStatus::Checking;
-                    (s.id.clone(), s.host.clone(), timeout_ms)
+                    let is_tg = s.id == "svc-telegram";
+                    let (host, port) = if is_tg {
+                        (tg_host.clone(), tg_port)
+                    } else {
+                        (s.host.clone(), 443)
+                    };
+                    (s.id.clone(), host, port, timeout_ms, is_tg)
                 })
                 .collect()
         };
 
-        let probes: Vec<(String, crate::engine::ProbeResult)> = thread::scope(|scope| {
+        let probes: Vec<(String, crate::engine::ProbeResult, bool)> = thread::scope(|scope| {
             let mut handles = Vec::with_capacity(jobs.len());
-            for (id, host, timeout_ms) in &jobs {
+            for (id, host, port, timeout_ms, is_tg) in &jobs {
                 handles.push(scope.spawn(move || {
-                    let probe = probe_tcp(
-                        host,
-                        443,
-                        Duration::from_millis(*timeout_ms),
-                    );
-                    (id.clone(), probe)
+                    let probe = probe_tcp(host, *port, Duration::from_millis(*timeout_ms));
+                    (id.clone(), probe, *is_tg)
                 }));
             }
             handles
@@ -408,14 +438,20 @@ impl AppState {
 
         let mut out = Vec::with_capacity(probes.len());
         let mut store = self.inner.lock().expect("state lock");
-        for (id, probe) in probes {
+        for (id, probe, is_tg) in probes {
             let Some(service) = store.services.iter_mut().find(|s| s.id == id) else {
                 continue;
             };
             service.status = probe.status();
             service.latency_ms = probe.latency_ms;
             service.last_checked_at = Some(now_iso());
-            service.diagnostic_summary = if probe.ok {
+            service.diagnostic_summary = if is_tg {
+                if probe.ok {
+                    format!("Local Telegram proxy listening. {}", probe.note)
+                } else {
+                    format!("Local Telegram proxy not listening. {}", probe.note)
+                }
+            } else if probe.ok {
                 format!("Available. {}", probe.note)
             } else {
                 format!("Unavailable. {}", probe.note)
@@ -517,8 +553,17 @@ impl AppState {
                     return Ok(());
                 }
             }
+            UpdateChannelId::TelegramProxy => {
+                drop(store);
+                self.tg_proxy.adopt_install(&outcome.channel.current_version);
+            }
         }
         Ok(())
+    }
+
+    pub fn shutdown_for_exit(&self) {
+        self.engine.shutdown_for_exit();
+        self.tg_proxy.shutdown_for_exit();
     }
 
     pub fn update_settings(&self, patch: SettingsPatch) -> AppSettings {
@@ -561,6 +606,12 @@ impl AppState {
         }
         if let Some(v) = patch.strategies_path {
             store.settings.strategies_path = v;
+        }
+        if let Some(v) = patch.telegram_proxy_enabled {
+            store.settings.telegram_proxy_enabled = v;
+        }
+        if let Some(v) = patch.telegram_offer_link_on_start {
+            store.settings.telegram_offer_link_on_start = v;
         }
         store.system.auto_update_enabled = store.settings.auto_check_updates;
         store.settings.clone()
@@ -696,6 +747,17 @@ fn seed_services() -> Vec<MonitoredService> {
                 note: Some("Connection reset".into()),
             }],
         },
+        MonitoredService {
+            id: "svc-telegram".into(),
+            name: "Telegram".into(),
+            host: "127.0.0.1".into(),
+            status: AvailabilityStatus::Unknown,
+            last_checked_at: None,
+            latency_ms: None,
+            diagnostic_summary: "Локальный MTProto-прокси (tg-ws-proxy). Не часть DPI Bypass.".into(),
+            is_built_in: true,
+            history: vec![],
+        },
     ]
 }
 
@@ -715,7 +777,7 @@ fn seed_diagnostics() -> DiagnosticRun {
     }
 }
 
-fn seed_updates(engine_version: &str) -> Vec<UpdateChannel> {
+fn seed_updates(engine_version: &str, tg_version: &str) -> Vec<UpdateChannel> {
     vec![
         UpdateChannel {
             id: UpdateChannelId::Application,
@@ -753,6 +815,18 @@ fn seed_updates(engine_version: &str) -> Vec<UpdateChannel> {
             release_notes: "Списки обновляются вместе с релизом Flowseal.".into(),
             independent: true,
         },
+        UpdateChannel {
+            id: UpdateChannelId::TelegramProxy,
+            title: "Telegram proxy".into(),
+            description: "Flowseal tg-ws-proxy (локальный MTProto → WebSocket). Отдельно от DPI Bypass.".into(),
+            current_version: tg_version.into(),
+            latest_version: tg_version.into(),
+            status: UpdateChannelStatus::UpToDate,
+            last_checked_at: None,
+            download_progress: None,
+            release_notes: "Источник: https://github.com/Flowseal/tg-ws-proxy".into(),
+            independent: true,
+        },
     ]
 }
 
@@ -771,6 +845,8 @@ fn seed_settings() -> AppSettings {
         advanced_logging: false,
         engine_path: None,
         strategies_path: None,
+        telegram_proxy_enabled: false,
+        telegram_offer_link_on_start: true,
     }
 }
 

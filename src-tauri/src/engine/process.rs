@@ -31,7 +31,7 @@ pub fn process_pid_running(pid: u32) -> bool {
     }
 }
 
-/// Force-terminate every process matching `image`. Prefer Child::kill on owned processes.
+/// Force-terminate every process matching `image`. Prefer `Child::kill` on owned processes.
 pub fn kill_image(image: &str) {
     let t0 = Instant::now();
     #[cfg(windows)]

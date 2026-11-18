@@ -22,9 +22,11 @@ I made zapp because I was tired of launching BAT files with a console window you
 
 zapp wraps zapret and the [Flowseal strategy pack](https://github.com/Flowseal/zapret-discord-youtube) in a small Tauri app. Press Start on the **Bypass** card, approve UAC once, and `winws` runs hidden in the background.
 
-**Smart check** (Fast by default, Thorough optional) tries strategies against YouTube and Discord — gateway plus `discord.media` ports — and turns on one that passes both. From **0.2.4** the loop is much faster; **0.2.5** hardens the engine lifecycle (stop-before-restart, Quit stops `winws`/helper, Cancel clears queued restarts), keeps Bypass status owned-only, and speeds DNS/probes further. Home keeps site cards grey until a fresh probe; stale “Available” from days ago no longer looks like live access.
+**Smart check** (Fast by default, Thorough optional) tries strategies against YouTube and Discord — gateway plus `discord.media` ports — and turns on one that passes both. From **0.2.4** the loop is much faster; **0.2.5** hardens the engine lifecycle; **0.2.6** adds a richer score/latency results UI and a native **Telegram** card (local [tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy) MTProto sidecar — **not** the same as DPI Bypass). Home keeps site cards grey until a fresh probe; stale “Available” from days ago no longer looks like live access.
 
-The app, engine and strategies update separately. English and Russian UI, light/dark themes, tray support.
+DPI Bypass and the Telegram MTProto proxy are separate toggles. The proxy listens on `127.0.0.1` and needs **Telegram Desktop** (or a client that accepts `tg://proxy` links). Smart check still only scores YouTube/Discord — it does not wait on Telegram.
+
+The app, engine, strategies, and Telegram proxy update on separate channels. English and Russian UI, light/dark themes, tray support. Report bugs from **About** (opens a prefilled GitHub Issue).
 
 zapp is not a VPN. Your IP stays visible and nothing is encrypted; the only thing that changes is how your packets look to DPI. Check that this is legal where you live.
 
@@ -53,7 +55,8 @@ Short version before you install:
 - As of **0.2.3+**, Smart check requires both YouTube and Discord (gateway + `discord.media` on Flowseal ports). It still only does **TCP/HTTPS probes**, not a real client — **Discord voice (UDP)** can fail while the Sites cards stay green.
 - From **0.2.4+** the check is much faster and steadier; if something still feels off afterwards, open **Modes** and pick a strategy by hand.
 - First launch needs GitHub access to download the engine pack. There is no offline pack picker in the UI yet.
-- Closing the window hides to the tray by default; the process is still running. **Quit from the tray** before reinstalling (0.2.5 also stops `winws`/helper on Quit), or the setup cannot replace `zapp.exe`.
+- Closing the window hides to the tray by default; the process is still running. **Quit from the tray** before reinstalling (Quit also stops `winws`/helper and the Telegram proxy), or the setup cannot replace `zapp.exe`.
+- Telegram proxy ships Flowseal’s tray binary; zapp starts/stops it and writes the local config, but a second tray icon from tg-ws-proxy may still appear.
 - Windows 10/11 x64 only. No macOS or Linux build.
 
 ## If something doesn't work
@@ -80,6 +83,7 @@ The engine isn't mine. zapp is the UI and the glue around it.
 |---------|--------|
 | [zapret](https://github.com/bol-van/zapret) | [bol-van](https://github.com/bol-van) |
 | [zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube) | [Flowseal](https://github.com/Flowseal) |
+| [tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy) | [Flowseal](https://github.com/Flowseal) |
 
 zapp doesn't ship WinDivert or `winws`; their licenses stay with the upstream projects.
 

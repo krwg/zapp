@@ -12,6 +12,8 @@ export interface ToastItem {
   title: string
   description?: string
   tone: ToastTone
+  actionLabel?: string
+  onAction?: () => void
 }
 
 interface ToastViewportProps {
@@ -27,6 +29,18 @@ export function ToastViewport({ items, onDismiss }: ToastViewportProps) {
           <div className={styles.body}>
             <p className={styles.title}>{item.title}</p>
             {item.description ? <p className={styles.description}>{item.description}</p> : null}
+            {item.actionLabel && item.onAction ? (
+              <button
+                type="button"
+                className={styles.action}
+                onClick={() => {
+                  item.onAction?.()
+                  onDismiss(item.id)
+                }}
+              >
+                {item.actionLabel}
+              </button>
+            ) : null}
           </div>
           <button
             type="button"

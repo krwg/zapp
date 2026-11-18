@@ -14,6 +14,8 @@ import {
 export interface UiPrefs {
   confirmDisableProtection: boolean
   showSidebarSession: boolean
+  tgProxyLinkOffered: boolean
+  bugReportHintSeen: boolean
 }
 
 interface UiPrefsContextValue extends UiPrefs {
@@ -24,6 +26,8 @@ const STORAGE_KEY = 'zapp.uiPrefs'
 const DEFAULTS: UiPrefs = {
   confirmDisableProtection: false,
   showSidebarSession: true,
+  tgProxyLinkOffered: false,
+  bugReportHintSeen: false,
 }
 
 const UiPrefsContext = createContext<UiPrefsContextValue | null>(null)

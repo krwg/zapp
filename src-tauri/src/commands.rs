@@ -13,7 +13,7 @@ fn quit_after_installer(app: &AppHandle) {
     let handle = app.clone();
     std::thread::spawn(move || {
         if let Some(state) = handle.try_state::<AppState>() {
-            state.engine.shutdown_for_exit();
+            state.shutdown_for_exit();
         }
         std::thread::sleep(std::time::Duration::from_millis(400));
         handle.exit(0);
@@ -50,6 +50,33 @@ pub fn set_engine_running(
         },
     );
     Ok(status)
+}
+
+#[tauri::command]
+pub fn set_telegram_proxy_running(
+    state: State<'_, AppState>,
+    running: bool,
+) -> AppResult<TelegramProxyState> {
+    if running && !state.tg_proxy.is_installed() {
+        // Best-effort install from GitHub before first start.
+        let _ = state.update_channel(UpdateChannelId::TelegramProxy);
+    }
+    let status = state.tg_proxy.set_running(running)?;
+    state.history.push(
+        "telegram",
+        if running {
+            "Telegram proxy started"
+        } else {
+            "Telegram proxy stopped"
+        },
+    );
+    let _ = status;
+    Ok(state.tg_proxy.snapshot_state())
+}
+
+#[tauri::command]
+pub fn get_telegram_proxy_link(state: State<'_, AppState>) -> String {
+    state.tg_proxy.proxy_link()
 }
 
 #[tauri::command]
@@ -198,4 +225,43 @@ pub fn reset_engine(state: State<'_, AppState>) -> AppResult<EngineStatus> {
     let status = state.engine.reset()?;
     state.history.push("engine", "Hard reset winws / WinDivert");
     Ok(status)
+}
+
+#[tauri::command]
+pub fn open_external_url(url: String) -> AppResult<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", &url])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| crate::error::AppError::from(e.to_string()))?;
+        return Ok(());
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = url;
+        Err(crate::error::AppError::from("open_external_url is Windows-only"))
+    }
+}
+
+#[tauri::command]
+pub fn get_recent_errors(state: State<'_, AppState>) -> Vec<String> {
+    state
+        .history
+        .list(32)
+        .into_iter()
+        .filter(|e| {
+            let kind = e.kind.to_ascii_lowercase();
+            let msg = e.message.to_ascii_lowercase();
+            kind.contains("error")
+                || kind.contains("fail")
+                || msg.contains("fail")
+                || msg.contains("error")
+        })
+        .take(8)
+        .map(|e| format!("[{}] {}", e.kind, e.message))
+        .collect()
 }

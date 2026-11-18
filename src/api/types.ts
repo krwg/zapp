@@ -9,6 +9,7 @@ import type {
   EngineStatus,
   MonitoredService,
   Profile,
+  TelegramProxyState,
   ThemeMode,
   UpdateChannel,
 } from '@/types'
@@ -21,6 +22,10 @@ export interface ZappApi {
   getUpdates(): Promise<UpdateChannel[]>
   setEngineRunning(running: boolean): Promise<EngineStatus>
   resetEngine(): Promise<EngineStatus>
+  setTelegramProxyRunning(running: boolean): Promise<TelegramProxyState>
+  getTelegramProxyLink(): Promise<string>
+  openExternalUrl(url: string): Promise<void>
+  getRecentErrors(): Promise<string[]>
   setActiveProfile(profileId: string): Promise<Profile>
   startDiagnostics(): Promise<DiagnosticRun>
   cancelDiagnostics(): Promise<DiagnosticRun>

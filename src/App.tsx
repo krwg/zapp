@@ -25,8 +25,8 @@ export default function App() {
       <ThemeProvider>
         <ToastProvider>
           <UiPrefsProvider>
-            <AppStateProvider>
-              <BrowserRouter>
+            <BrowserRouter>
+              <AppStateProvider>
                 <Routes>
                   <Route element={<AppShell />}>
                     <Route index element={<OverviewPage />} />
@@ -39,8 +39,8 @@ export default function App() {
                     <Route path="*" element={<Navigate to="/" replace />} />
                   </Route>
                 </Routes>
-              </BrowserRouter>
-            </AppStateProvider>
+              </AppStateProvider>
+            </BrowserRouter>
           </UiPrefsProvider>
         </ToastProvider>
       </ThemeProvider>
