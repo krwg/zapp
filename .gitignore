@@ -71,3 +71,7 @@ Desktop.ini
 # local release copies (GitHub Releases is the source of truth)
 dist-release/
 
+
+# Draft release notes kept local until publish
+RELEASE_0.2.6.md
+
