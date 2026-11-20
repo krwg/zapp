@@ -44,14 +44,14 @@ Stable 0.2.5 engine lifecycle, plus trust hardening, clearer errors, richer Smar
 | `zapp_0.2.6_x64-setup.exe` | Recommended · NSIS · cleanup page |
 | `zapp_0.2.6_x64_en-US.msi` | Optional · no cleanup page |
 
-SHA256 (see release assets after rebuild if hashes change):
+SHA256:
 
 ```
 zapp_0.2.6_x64-setup.exe
-82D1658C12B918DDACBC9E6A15030B68B8E16C8A67A4F0BFE99C7BFF54B273F8
+6281DF8FD003012886E12D84D72C9025BBB6C21DE8A2F987B91A48F87E014927
 
 zapp_0.2.6_x64_en-US.msi
-28F7F32F04611D4648ECB65CDD66A9D88B872147F24030BA93320D8A2C705C5E
+29C13FF242C12C594DB1C7F4B2DBD6D0D87E261BE424BBD3A230F71969F1F413
 ```
 
 ### Verify
