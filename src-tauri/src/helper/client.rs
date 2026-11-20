@@ -359,7 +359,8 @@ pub fn helper_start(
         Duration::from_secs(60),
     )?;
     if !res.ok {
-        return Err(EngineFault::new(FaultCode::WinwsExitedImmediately, res.message));
+        log::warn!("helper start refused/failed: {}", res.message);
+        return Err(crate::engine::fault_from_helper_message(res.message));
     }
     res.status.ok_or_else(|| {
         EngineFault::new(FaultCode::Unknown, "helper start returned no status")
@@ -393,6 +394,40 @@ pub fn helper_reset(app_data: &Path) -> Result<(), EngineFault> {
     } else {
         Err(EngineFault::new(FaultCode::StopFailed, res.message))
     }
+}
+
+/// Elevated copy of a staged pack into `%ProgramData%\zapp\engine\<ver>` + ACL.
+/// Returns the installed pack root.
+pub fn helper_install_engine(
+    app_data: &Path,
+    version: &str,
+    source_dir: &Path,
+) -> Result<std::path::PathBuf, EngineFault> {
+    ensure_helper(app_data)?;
+    let token = ensure_token(app_data)?;
+    let res = request_with_timeout(
+        &HelperRequest::InstallEngine {
+            token,
+            version: version.to_string(),
+            source_dir: source_dir.to_string_lossy().into_owned(),
+        },
+        Duration::from_secs(180),
+    )?;
+    if !res.ok {
+        log::warn!("helper install engine failed: {}", res.message);
+        return Err(crate::engine::fault_from_helper_message(res.message));
+    }
+    let dest = crate::helper::paths::program_data_engine_prefix().join(version);
+    if !dest.join("bin").join("winws.exe").is_file() {
+        return Err(EngineFault::new(
+            FaultCode::Unknown,
+            format!(
+                "helper reported install ok but pack missing at {}",
+                dest.display()
+            ),
+        ));
+    }
+    Ok(dest)
 }
 
 /// Ask the elevated helper to exit (Quit / update). Best-effort; ignores missing helper.

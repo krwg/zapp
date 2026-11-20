@@ -107,6 +107,7 @@ export const en = {
     activeMode: 'Current mode',
     uptime: 'Session time',
     lastError: 'Last error',
+    reportFromError: 'Report this error',
   },
   aboutPage: {
     title: 'About',
@@ -137,26 +138,29 @@ export const en = {
     reportAreaBypass: 'Bypass',
     reportAreaSmart: 'Smart check',
     reportAreaUpdates: 'Updates',
-    reportSend: 'Open on GitHub',
+    reportSend: 'Submit on GitHub',
     reportHint:
-      'Opens a pre-filled GitHub Issue. Sign in to GitHub and submit — no secrets are sent from zapp.',
+      "We'll open GitHub with your report mostly filled in. Sign in and submit — zapp never sends passwords or personal data.",
   },
   smartCheck: {
     title: 'Smart check',
     description:
-      'Compares available modes by speed and access, then turns on the best one.',
+      'Checks YouTube and Discord across multiple endpoints, ranks modes by access and latency, then turns on the best one.',
     start: 'Start check',
     cancel: 'Stop check',
+    hostCritical: 'critical',
+    hostSoft: 'soft',
+    analysis: 'Analysis',
     runAgain: 'Run again',
     mode: 'Mode',
     modeFast: 'Fast',
     modeThorough: 'Thorough',
-    modeHint: 'Fast stops at the first working mode. Thorough ranks more options.',
+    modeHint: 'Fast stops on a strong working mode. Thorough ranks more options.',
     result: 'Result',
     latency: 'Response',
     latencyMedian: 'Median',
     latencyMax: 'Max',
-    softScore: 'Soft',
+    softScore: 'Extra',
     score: 'Score',
     notes: 'Notes',
     tested: 'Tested',
@@ -377,11 +381,11 @@ export const en = {
     smartCheckLabel: 'How the check runs',
     smartCheckTitle: 'Smart check flow',
     smartCheckBody:
-      'Start check walks modes one by one. The orbit shows the phase; the right side shows progress. When finished, the ranking below lists scores — higher means better access and latency. Apply the best result or any other working mode.',
+      'Modes are tested one by one against several YouTube and Discord endpoints (site, gateway, media, images). The score weighs critical reachability, soft CDN checks, and latency. Fast mode stops on a strong pass; Thorough compares nearly all modes.',
     resultsLabel: 'How to read the ranking',
     resultsTitle: 'Check results',
     resultsBody:
-      'Rows are sorted by score. The bar is relative performance. Activate applies a mode without re-testing. If the list is empty, run the check above first.',
+      'Rows sort by score, then soft score and latency. Critical hosts must pass; soft CDN hosts refine the ranking. Expand a row for services, hosts, and a short analysis. Activate applies a mode without re-testing.',
   },
 } as const
 

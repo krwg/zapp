@@ -17,9 +17,16 @@ interface ConnectionCardProps {
   busy?: boolean
   onToggle: () => void
   onReset?: () => void
+  onReportBug?: () => void
 }
 
-export function ConnectionCard({ connection, busy, onToggle, onReset }: ConnectionCardProps) {
+export function ConnectionCard({
+  connection,
+  busy,
+  onToggle,
+  onReset,
+  onReportBug,
+}: ConnectionCardProps) {
   const { t, locale } = useLocale()
   const { confirmDisableProtection } = useUiPrefs()
   const [tick, setTick] = useState(() => Date.now())
@@ -123,6 +130,15 @@ export function ConnectionCard({ connection, busy, onToggle, onReset }: Connecti
           <div className={styles.errorBox} role="alert">
             <div className={styles.errorTitle}>{t('connection.lastError')}</div>
             <div className={styles.errorText}>{connection.lastError}</div>
+            {onReportBug && (
+              <button
+                type="button"
+                className={styles.errorReport}
+                onClick={onReportBug}
+              >
+                {t('connection.reportFromError')}
+              </button>
+            )}
           </div>
         )}
       </section>

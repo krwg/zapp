@@ -255,23 +255,56 @@ impl UpdateManager {
             }
         }
 
-        let dest = self.app_data.join("engine").join(&version);
-        if dest.exists() {
-            fs::remove_dir_all(&dest).map_err(|e| AppError::from(e.to_string()))?;
+        // Stage under AppData (user-writable), then prefer elevated ProgramData install + ACL.
+        let staging = self
+            .app_data
+            .join("downloads")
+            .join("engine-staging")
+            .join(&version);
+        if staging.exists() {
+            fs::remove_dir_all(&staging).map_err(|e| AppError::from(e.to_string()))?;
         }
-        fs::create_dir_all(&dest).map_err(|e| AppError::from(e.to_string()))?;
-        extract_zip(&archive_path, &dest)?;
+        fs::create_dir_all(&staging).map_err(|e| AppError::from(e.to_string()))?;
+        extract_zip(&archive_path, &staging)?;
 
-        let nested = normalize_extracted_pack(&dest)?;
-        let layout_root = flatten_pack_to_version_dir(&dest, &nested)?;
-        crate::engine::pack::ensure_flowseal_sidecars(&layout_root)?;
-        if !crate::engine::pack::pack_payloads_present(&layout_root) {
+        let nested = normalize_extracted_pack(&staging)?;
+        let staged_root = flatten_pack_to_version_dir(&staging, &nested)?;
+        crate::engine::pack::ensure_flowseal_sidecars(&staged_root)?;
+        if !crate::engine::pack::pack_payloads_present(&staged_root) {
             return Err(AppError::from(
                 "Engine pack installed but bin/*.bin payloads are missing — re-download Engine",
             ));
         }
+
+        let layout_root = match crate::helper::helper_install_engine(
+            &self.app_data,
+            &version,
+            &staged_root,
+        ) {
+            Ok(dest) => {
+                log::info!(
+                    "engine installed to ProgramData via elevated helper: {}",
+                    dest.display()
+                );
+                let _ = fs::remove_dir_all(&staging);
+                dest
+            }
+            Err(e) => {
+                log::warn!(
+                    "elevated ProgramData install unavailable ({}); falling back to AppData",
+                    e.log_line()
+                );
+                let dest = self.app_data.join("engine").join(&version);
+                if dest.exists() {
+                    fs::remove_dir_all(&dest).map_err(|err| AppError::from(err.to_string()))?;
+                }
+                copy_dir_recursive(&staged_root, &dest)?;
+                let _ = fs::remove_dir_all(&staging);
+                link_engine_current_near(&dest)?;
+                dest
+            }
+        };
         let layout = EngineLayout::from_pack(layout_root);
-        link_engine_current(&self.app_data, &layout.root)?;
 
         let mut channels = self.channels.lock().expect("updates lock");
         for channel in channels.iter_mut() {
@@ -405,8 +438,11 @@ impl UpdateManager {
     }
 }
 
-fn link_engine_current(app_data: &Path, root: &Path) -> AppResult<()> {
-    let current = app_data.join("engine").join("current");
+fn link_engine_current_near(root: &Path) -> AppResult<()> {
+    let engine_prefix = root
+        .parent()
+        .ok_or_else(|| AppError::from("engine pack has no parent prefix"))?;
+    let current = engine_prefix.join("current");
     let _ = fs::remove_dir_all(&current);
     let _ = fs::remove_file(&current);
     #[cfg(windows)]

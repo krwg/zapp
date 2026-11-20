@@ -41,8 +41,9 @@ pub struct DiagTarget {
     pub critical: bool,
 }
 
-/// Critical endpoints used by Smart Check.
+/// Critical + soft endpoints used by Smart Check.
 /// Discord needs gateway + `discord.media` on Flowseal alt ports (2053…).
+/// Soft hosts refine ranking (CDN / images) without alone failing a service.
 pub fn diag_targets() -> Vec<DiagTarget> {
     vec![
         DiagTarget {
@@ -51,6 +52,21 @@ pub fn diag_targets() -> Vec<DiagTarget> {
             port: 443,
             https: true,
             critical: true,
+        },
+        DiagTarget {
+            service: "youtube",
+            host: "www.youtube.com",
+            port: 443,
+            https: true,
+            critical: true,
+        },
+        // Soft: image CDN often blocked when main site still opens.
+        DiagTarget {
+            service: "youtube",
+            host: "i.ytimg.com",
+            port: 443,
+            https: true,
+            critical: false,
         },
         DiagTarget {
             service: "discord",
@@ -79,6 +95,14 @@ pub fn diag_targets() -> Vec<DiagTarget> {
             host: "cdn.discordapp.com",
             port: 443,
             https: true,
+            critical: false,
+        },
+        // Soft STUN/UDP smoke — voice can fail while HTTPS looks fine.
+        DiagTarget {
+            service: "discord",
+            host: "stun.cloudflare.com",
+            port: 3478,
+            https: false,
             critical: false,
         },
     ]
@@ -236,6 +260,80 @@ fn probe_tcp_addrs_abortable(
         note: "TCP connect failed".into(),
         protocol: "tcp",
         weight: 1,
+    }
+}
+
+/// Soft UDP smoke via STUN Binding Request — detects wholesale UDP blocks.
+fn probe_udp_stun(host: &str, port: u16, pre: &[SocketAddr], timeout: Duration) -> ProbeResult {
+    use std::net::UdpSocket;
+
+    let start = Instant::now();
+    let resolved: Vec<SocketAddr> = if !pre.is_empty() {
+        prefer_ipv4(pre.iter().map(|a| SocketAddr::new(a.ip(), port)))
+    } else {
+        resolve_host_timed(host, port, timeout.min(Duration::from_millis(1200)))
+    };
+    if resolved.is_empty() {
+        return ProbeResult {
+            ok: false,
+            latency_ms: None,
+            note: "UDP DNS failed".into(),
+            protocol: "udp",
+            weight: 2,
+        };
+    }
+
+    let Ok(sock) = UdpSocket::bind("0.0.0.0:0") else {
+        return ProbeResult {
+            ok: false,
+            latency_ms: None,
+            note: "UDP bind failed".into(),
+            protocol: "udp",
+            weight: 2,
+        };
+    };
+    let slice = timeout.min(Duration::from_millis(600));
+    let _ = sock.set_read_timeout(Some(slice));
+    let _ = sock.set_write_timeout(Some(slice));
+
+    // RFC 5389 Binding Request (header only).
+    let mut req = [0u8; 20];
+    req[0] = 0x00;
+    req[1] = 0x01;
+    req[4] = 0x21;
+    req[5] = 0x12;
+    req[6] = 0xa4;
+    req[7] = 0x42;
+    for b in &mut req[8..] {
+        *b = (start.elapsed().as_nanos() as u8).wrapping_add(*b);
+    }
+
+    for addr in &resolved {
+        if sock.send_to(&req, addr).is_err() {
+            continue;
+        }
+        let mut buf = [0u8; 128];
+        match sock.recv_from(&mut buf) {
+            Ok((n, _)) if n >= 20 && buf[0] == 0x01 && buf[1] == 0x01 => {
+                let ms = start.elapsed().as_millis().min(u32::MAX as u128) as u32;
+                return ProbeResult {
+                    ok: true,
+                    latency_ms: Some(ms),
+                    note: "UDP/STUN OK".into(),
+                    protocol: "udp",
+                    weight: 2,
+                };
+            }
+            _ => continue,
+        }
+    }
+
+    ProbeResult {
+        ok: false,
+        latency_ms: None,
+        note: "UDP/STUN no reply (voice may fail)".into(),
+        protocol: "udp",
+        weight: 2,
     }
 }
 
@@ -423,6 +521,11 @@ fn probe_matrix_resolved(
     let addrs = &resolved.addrs;
 
     if !target.https {
+        // Soft STUN/UDP path (voice hint).
+        if target.port == 3478 {
+            let udp_budget = timeout.min(Duration::from_millis(700));
+            return vec![probe_udp_stun(target.host, target.port, addrs, udp_budget)];
+        }
         // TCP-only (discord.media): try Flowseal alt ports in parallel.
         let ports: Vec<u16> = if target.port == 2053 {
             vec![2053, 2083, 8443]
@@ -671,7 +774,8 @@ pub fn score_by_service(
             } else {
                 soft.iter().sum::<u32>() / soft.len() as u32
             };
-            let score = ((critical_floor * 85) + (soft_avg * 15)) / 100;
+            // Soft CDN/UDP weighs more so ranking separates "site opens" vs "media works".
+            let score = ((critical_floor * 75) + (soft_avg * 25)) / 100;
             ServiceScore {
                 service: service.into(),
                 score,
@@ -713,11 +817,20 @@ pub fn rank_score(probe_score: u32, strategy_name: &str) -> u32 {
     rank_score_with_latency(probe_score, strategy_name, None)
 }
 
-/// Latency tier (best critical ms): faster strategies rise on ties / near-ties.
+/// Latency tier + soft CDN/UDP contribution for finer ranking.
 pub fn rank_score_with_latency(
     probe_score: u32,
     strategy_name: &str,
     best_latency_ms: Option<u32>,
+) -> u32 {
+    rank_score_full(probe_score, strategy_name, best_latency_ms, 0)
+}
+
+pub fn rank_score_full(
+    probe_score: u32,
+    strategy_name: &str,
+    best_latency_ms: Option<u32>,
+    soft_score: u32,
 ) -> u32 {
     let mut adjusted = probe_score as i32 + strategy_prior_bonus(strategy_name);
     if let Some(ms) = best_latency_ms {
@@ -729,6 +842,8 @@ pub fn rank_score_with_latency(
             _ => -4,
         };
     }
+    // Soft path (CDN / UDP) breaks near-ties without overriding critical failures.
+    adjusted += (soft_score as i32 / 20).min(5);
     adjusted.clamp(0, 100) as u32
 }
 
@@ -766,4 +881,82 @@ pub fn default_targets() -> Vec<(&'static str, u16)> {
         ("gateway.discord.gg", 443),
         ("github.com", 443),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ok_probe(protocol: &'static str, weight: u32, ms: u32) -> ProbeResult {
+        ProbeResult {
+            ok: true,
+            latency_ms: Some(ms),
+            note: "ok".into(),
+            protocol,
+            weight,
+        }
+    }
+
+    fn fail_probe(protocol: &'static str) -> ProbeResult {
+        ProbeResult {
+            ok: false,
+            latency_ms: None,
+            note: "fail".into(),
+            protocol,
+            weight: 1,
+        }
+    }
+
+    #[test]
+    fn score_by_service_requires_all_critical() {
+        let yt = DiagTarget {
+            service: "youtube",
+            host: "youtube.com",
+            port: 443,
+            https: true,
+            critical: true,
+        };
+        let yt_cdn = DiagTarget {
+            service: "youtube",
+            host: "i.ytimg.com",
+            port: 443,
+            https: true,
+            critical: false,
+        };
+        let disc = DiagTarget {
+            service: "discord",
+            host: "discord.com",
+            port: 443,
+            https: true,
+            critical: true,
+        };
+
+        let pass = score_by_service(
+            &[
+                (yt, vec![ok_probe("https", 3, 80)]),
+                (yt_cdn, vec![fail_probe("https")]),
+                (disc, vec![ok_probe("https", 3, 90)]),
+            ],
+            55,
+        );
+        assert!(pass.success);
+        assert!(pass.score < 100);
+
+        let fail = score_by_service(
+            &[
+                (yt, vec![fail_probe("https")]),
+                (yt_cdn, vec![ok_probe("https", 3, 50)]),
+                (disc, vec![ok_probe("https", 3, 90)]),
+            ],
+            55,
+        );
+        assert!(!fail.success);
+    }
+
+    #[test]
+    fn rank_score_full_soft_breaks_ties() {
+        let a = rank_score_full(70, "general (FAKE TLS AUTO)", Some(100), 20);
+        let b = rank_score_full(70, "general (FAKE TLS AUTO)", Some(100), 80);
+        assert!(b > a);
+    }
 }

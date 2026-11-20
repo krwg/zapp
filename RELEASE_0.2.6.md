@@ -1,36 +1,39 @@
 ## zapp 0.2.6
 
-Keeps the stable 0.2.5 engine lifecycle and adds clearer Updates / About UX, richer Smart check results, and stricter checks before applying Application updates. No Telegram proxy in this build.
+Stable 0.2.5 engine lifecycle, plus trust hardening, clearer errors, richer Smart check, and ProgramData engine installs. No Telegram proxy.
 
-### Upgrading from 0.2.5
+### Upgrading
 
 1. Install **`zapp_0.2.6_x64-setup.exe`** (NSIS), or let Application auto-update download it and confirm UAC.
 2. Quit from the tray if the installer cannot replace `zapp.exe`.
-3. Open **Updates** for Markdown release notes; **About → Report a bug** if something breaks.
+3. Open **Updates** for Markdown notes; use **Report a bug** from a toast or the error on Home if something breaks.
 
 ### Fixed
 
-- **Release notes Markdown** — headings, lists, fenced code, and callouts render correctly in Updates (no more raw `###`).
-- **Update check failures** — network / GitHub errors show as Error on the channel instead of looking “up to date”.
-- **Preferred installer** — Application updates prefer the NSIS setup over MSI.
+- **Helper `work_dir`** — Flowseal `bin` cwd is accepted (pack root or `bin`); Start no longer fails with a path allowlist refuse.
+- **User-facing errors** — toasts and Home show plain language; technical `refused:` / paths stay in logs and bug-report history.
+- **Report a bug** — opens the report dialog directly (not just the About page) with most fields prefilled; steps left for you.
+- **Release notes Markdown** — headings, lists, fenced code, callouts in Updates.
+- **Update check failures** — network / GitHub errors show as Error on the channel.
+- **Preferred installer** — Application updates prefer NSIS over MSI.
 
 ### Added
 
-- **Richer Smart check results** — per-service scores, host details, soft score, median/max latency; expandable rows.
-- **Report a bug** on About — prefilled GitHub Issue; error toasts can open About; issue template added.
-- **Safer Application installs** — downloaded installers are checked against published SHA256 (GitHub digest or release notes) before launch.
-- **Engine download checks** — reject obviously invalid zip downloads before extract.
-- **Helper launch checks** — elevated helper only starts the managed engine binary from the installed pack layout.
+- **ProgramData engine + ACL** — Engine installs prefer `%ProgramData%\zapp\engine\` via elevated helper (`InstallEngine`); SYSTEM/Admins full, Users read/execute. Falls back to AppData if UAC is declined.
+- **Helper path allowlist** — elevated helper only starts managed `winws` under AppData or ProgramData packs.
+- **Safer Application installs** — SHA256 check against published digest / notes before launch; engine zips get a sanity check.
+- **Smarter Smart check** — more YouTube/Discord endpoints (www, image CDN, soft STUN/UDP), soft score in ranking, Fast stops on a strong pass, expandable critical/soft host details and short analysis.
+- **Report a bug** on About — clearer copy; GitHub Issue template.
 
 ### Changed
 
-- Settings no longer show unused advanced toggles that did nothing in the UI.
+- Settings no longer show unused advanced toggles that did nothing.
 - Continues on the hardened 0.2.5 Bypass / helper / Quit / Cancel lifecycle.
 
 ### Known limitations
 
-- Probes are still **TCP/HTTPS**, not a real Discord client. **Voice (UDP)** can fail while Sites cards look green.
-- Engine pack downloads from GitHub on first run; not bundled in the installer.
+- Smart check is still **TCP/HTTPS + soft UDP smoke**, not a full Discord/YouTube client. Voice can still fail in edge cases.
+- First engine download needs GitHub; no offline pack picker in the UI yet.
 - **MSI** has no cleanup page — prefer NSIS.
 - Not a VPN; no telemetry.
 
@@ -41,7 +44,7 @@ Keeps the stable 0.2.5 engine lifecycle and adds clearer Updates / About UX, ric
 | `zapp_0.2.6_x64-setup.exe` | Recommended · NSIS · cleanup page |
 | `zapp_0.2.6_x64_en-US.msi` | Optional · no cleanup page |
 
-SHA256:
+SHA256 (see release assets after rebuild if hashes change):
 
 ```
 zapp_0.2.6_x64-setup.exe

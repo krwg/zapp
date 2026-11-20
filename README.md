@@ -22,7 +22,7 @@ I made zapp because I was tired of launching BAT files with a console window you
 
 zapp wraps zapret and the [Flowseal strategy pack](https://github.com/Flowseal/zapret-discord-youtube) in a small Tauri app. Press Start on the **Bypass** card, approve UAC once, and `winws` runs hidden in the background.
 
-**Smart check** (Fast by default, Thorough optional) tries strategies against YouTube and Discord — gateway plus `discord.media` ports — and turns on one that passes both. From **0.2.4** the loop is much faster; **0.2.5** hardens the engine lifecycle (stop-before-restart, Quit stops `winws`/helper, Cancel clears queued restarts), keeps Bypass status owned-only, and speeds DNS/probes further. **0.2.6** keeps that lifecycle and adds Markdown release notes, in-app bug reports, and richer Smart check result details. Home keeps site cards grey until a fresh probe; stale “Available” from days ago no longer looks like live access.
+**Smart check** (Fast by default, Thorough optional) tries strategies against YouTube and Discord across several endpoints (site, gateway, media, image CDN, soft UDP smoke) and turns on a mode that passes both services. From **0.2.4** the loop is much faster; **0.2.5** hardens the engine lifecycle. **0.2.6** keeps that lifecycle and adds trust hardening (helper path allowlist, ProgramData engine + ACL, installer SHA256), plain-language errors with one-click bug reports, Markdown release notes, and a smarter Smart check ranking. Home keeps site cards grey until a fresh probe.
 
 The app, engine and strategies update separately. English and Russian UI, light/dark themes, tray support.
 
@@ -42,7 +42,7 @@ The NSIS `setup.exe` is the one I recommend: on a reinstall it can wipe the old 
 
 `winws` uses [WinDivert](https://reqrypt.org/windivert.html), which loads a kernel driver, so it needs admin rights. zapp starts one elevated helper, `zapp-helper.exe`, and talks to it over a token-authenticated TCP port on `127.0.0.1`. Nothing there is reachable from the network.
 
-On first run, and when Engine or Strategies update, zapp downloads the Flowseal pack from its GitHub Releases into `%APPDATA%\app.zapp.desktop\engine\`. App updates come from [krwg/zapp](https://github.com/krwg/zapp/releases). Apart from GitHub release checks and the site probes you start yourself, zapp makes no other requests. There is no telemetry. Settings and logs stay in `%APPDATA%\app.zapp.desktop\`, helper state in `%LOCALAPPDATA%\zapp\`.
+On first run, and when Engine or Strategies update, zapp downloads the Flowseal pack from GitHub. New installs prefer `%ProgramData%\zapp\engine\` (elevated helper + locked ACL); older / fallback packs stay under `%APPDATA%\app.zapp.desktop\engine\`. App updates come from [krwg/zapp](https://github.com/krwg/zapp/releases). Apart from GitHub release checks and the site probes you start yourself, zapp makes no other requests. There is no telemetry. Settings and logs stay in `%APPDATA%\app.zapp.desktop\`, helper state in `%LOCALAPPDATA%\zapp\`.
 
 Antivirus and SmartScreen sometimes flag WinDivert-based tools, because a packet-filter driver looks suspicious by nature. The source is open, so you can check the installer's SHA256 or build it yourself.
 
@@ -50,7 +50,7 @@ Antivirus and SmartScreen sometimes flag WinDivert-based tools, because a packet
 
 Short version before you install:
 
-- As of **0.2.6**, Smart check still requires both YouTube and Discord (gateway + `discord.media` on Flowseal ports) and shows richer per-host scores. It still only does **TCP/HTTPS probes**, not a real client — **Discord voice (UDP)** can fail while the Sites cards stay green.
+- As of **0.2.6**, Smart check still requires both YouTube and Discord and ranks modes with critical + soft scores (CDN / STUN). Probes are **TCP/HTTPS plus a soft UDP smoke test**, not a real client — voice can still fail while Sites look green.
 - From **0.2.4+** the check is much faster and steadier; if something still feels off afterwards, open **Modes** and pick a strategy by hand.
 - First launch needs GitHub access to download the engine pack. There is no offline pack picker in the UI yet.
 - Closing the window hides to the tray by default; the process is still running. **Quit from the tray** before reinstalling (0.2.5 also stops `winws`/helper on Quit), or the setup cannot replace `zapp.exe`.

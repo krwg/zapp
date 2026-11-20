@@ -40,16 +40,24 @@ pub fn set_engine_running(
     state: State<'_, AppState>,
     running: bool,
 ) -> AppResult<EngineStatus> {
-    let status = state.engine.set_running(running)?;
-    state.history.push(
-        "engine",
-        if running {
-            "Engine started (hidden winws)"
-        } else {
-            "Engine stopped"
-        },
-    );
-    Ok(status)
+    match state.engine.set_running(running) {
+        Ok(status) => {
+            state.history.push(
+                "engine",
+                if running {
+                    "Engine started (hidden winws)"
+                } else {
+                    "Engine stopped"
+                },
+            );
+            Ok(status)
+        }
+        Err(e) => {
+            // Toast/UI serialize user text; history keeps the technical log line for bug reports.
+            state.history.push("error", e.log_message().to_string());
+            Err(e)
+        }
+    }
 }
 
 #[tauri::command]

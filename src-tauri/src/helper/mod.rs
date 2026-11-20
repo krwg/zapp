@@ -3,13 +3,13 @@
 // ╚════════════════════════════════════════════════════╝
 
 mod client;
-mod paths;
+pub mod paths;
 mod protocol;
 mod server;
 
 pub use client::{
-    ensure_helper, helper_ping, helper_reset, helper_shutdown, helper_start, helper_status,
-    helper_stop,
+    ensure_helper, helper_install_engine, helper_ping, helper_reset, helper_shutdown,
+    helper_start, helper_status, helper_stop,
 };
 pub use protocol::{HelperRequest, HelperResponse, HelperStatus};
 

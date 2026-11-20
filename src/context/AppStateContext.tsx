@@ -23,6 +23,7 @@ import type {
   Profile,
   UpdateChannel,
 } from '@/types'
+import type { BugReportPrefill } from '@/types/bugReport'
 import { useLocale } from './LocaleContext'
 import { useToast } from './ToastContext'
 import { useTheme } from './ThemeContext'
@@ -45,6 +46,7 @@ interface AppStateContextValue {
   updatesLive: UpdateChannel[]
   updateSettings: (patch: Partial<AppSettings>, opts?: { quiet?: boolean }) => Promise<void>
   getRecentErrors: () => Promise<string[]>
+  openBugReport: (message: string, areas?: BugReportPrefill['areas']) => void
   busy: Record<string, boolean>
 }
 
@@ -97,6 +99,24 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     setMode(data.settings.appearance)
   }, [api, setMode])
 
+  const openBugReport = useCallback(
+    (message: string, areas?: BugReportPrefill['areas']) => {
+      navigate('/about', {
+        state: {
+          openBugReport: true,
+          bugPrefill: {
+            summary: message.split('—')[0]?.trim() || message.slice(0, 80),
+            expected: t('aboutPage.reportExpectedPh'),
+            actual: message,
+            areas: areas ?? { bypass: true },
+            // steps left blank for the user (~10%)
+          },
+        },
+      })
+    },
+    [navigate, t],
+  )
+
   const withBusy = useCallback(
     async (key: string, fn: () => Promise<void>) => {
       setBusy((prev) => ({ ...prev, [key]: true }))
@@ -104,12 +124,17 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         await fn()
       } catch (err) {
         const message = formatInvokeError(err, t('common.unknownError'))
+        const areas = {
+          bypass: key === 'engine' || key.startsWith('profile:'),
+          smart: key.startsWith('diagnostics'),
+          updates: key.startsWith('update') || key === 'updates:check',
+        }
         push({
           title: t('toast.errorTitle'),
           description: message,
           tone: 'error',
           actionLabel: t('aboutPage.reportBug'),
-          onAction: () => navigate('/about'),
+          onAction: () => openBugReport(message, areas),
         })
         try {
           await refresh()
@@ -120,7 +145,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         setBusy((prev) => ({ ...prev, [key]: false }))
       }
     },
-    [navigate, push, refresh, t],
+    [openBugReport, push, refresh, t],
   )
 
   useEffect(() => {
@@ -454,6 +479,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       updatesLive,
       updateSettings,
       getRecentErrors,
+      openBugReport,
       busy,
     }),
     [
@@ -474,6 +500,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       updatesLive,
       updateSettings,
       getRecentErrors,
+      openBugReport,
       busy,
     ],
   )

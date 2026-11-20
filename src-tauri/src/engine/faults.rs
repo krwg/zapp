@@ -24,6 +24,8 @@ pub enum FaultCode {
     StopFailed,
     EngineNotInstalled,
     DiagnosticsNeedsAdmin,
+    /// Helper refused the launch (path / policy). Detail is for logs only.
+    LaunchRefused,
     Unknown,
 }
 
@@ -49,97 +51,114 @@ impl EngineFault {
         }
     }
 
+    /// Short user-facing text for toasts / UI (no raw paths or internal refusal strings).
     pub fn message(&self) -> String {
-        format!("{} — {}. {}", self.title, self.detail, self.hint)
+        format!("{} — {}", self.title, self.hint)
+    }
+
+    /// Full line for logs / history (includes technical detail).
+    pub fn log_line(&self) -> String {
+        format!(
+            "[{:?}] {} | detail={} | hint={}",
+            self.code, self.title, self.detail, self.hint
+        )
     }
 }
 
 impl From<EngineFault> for AppError {
     fn from(value: EngineFault) -> Self {
-        AppError::from(value.message())
+        AppError::Detailed {
+            user: value.message(),
+            log: value.log_line(),
+        }
     }
 }
 
 fn catalog(code: &FaultCode) -> (&'static str, &'static str, bool) {
     match code {
         FaultCode::WinwsBinaryMissing => (
-            "winws не найден",
-            "Проверьте Engine pack / обновление Engine в разделе Updates.",
+            "Не найден файл обхода",
+            "Откройте Updates → Engine и переустановите пакет.",
             false,
         ),
         FaultCode::WinDivertDriverMissing => (
-            "Нет драйвера WinDivert",
-            "В пакете должны быть WinDivert64.sys и WinDivert.dll рядом с winws.exe.",
+            "Не хватает файлов драйвера",
+            "Переустановите Engine в разделе Updates.",
             false,
         ),
         FaultCode::StrategyBatMissing => (
             "Стратегия не найдена",
-            "Выберите другой профиль или обновите Strategies.",
+            "Выберите другой режим или обновите Strategies.",
             true,
         ),
         FaultCode::StrategyParseFailed => (
-            "Не разобрать стратегию",
-            "BAT повреждён или имеет нестандартный формат. Попробуйте другую стратегию.",
+            "Не удалось прочитать стратегию",
+            "Попробуйте другой режим или обновите Strategies.",
             true,
         ),
         FaultCode::StrategyPayloadMissing => (
             "Не хватает файлов стратегии",
-            "Отсутствуют списки или payload (lists/*.txt, bin/*.bin), на которые ссылается профиль. Обновите Engine или переустановите пакет Flowseal.",
+            "Обновите Engine или Strategies в разделе Updates.",
             false,
         ),
         FaultCode::UacCancelled => (
-            "UAC отклонён",
-            "Нажмите Start ещё раз и подтвердите запрос прав администратора.",
+            "Запрос прав отклонён",
+            "Нажмите включение ещё раз и подтвердите запрос администратора.",
             true,
         ),
         FaultCode::UacLaunchFailed => (
-            "Elevated-запуск не удался",
-            "Подтвердите UAC. Если окно не появилось — антивирус мог заблокировать winws.",
+            "Не удалось получить права",
+            "Подтвердите запрос администратора. Если окно не появилось — проверьте антивирус.",
             true,
         ),
         FaultCode::WinwsExitedImmediately => (
-            "winws сразу завершился",
-            "Частые причины: конфликт WinDivert, AV, битый драйвер, неверные аргументы стратегии.",
+            "Обход не запустился",
+            "Закройте другие VPN/обходы и попробуйте снова. Если повторится — сообщите об ошибке.",
             true,
         ),
         FaultCode::WinDivertConflict => (
-            "Конфликт WinDivert",
-            "Остановите другие обходы (GoodbyeDPI, zapret, ZapretGUI) и нажмите Stop, затем Start.",
+            "Конфликт с другим обходом",
+            "Остановите другие программы обхода, нажмите «Сбросить ядро», затем включите снова.",
             true,
         ),
         FaultCode::AccessDenied => (
-            "Нет прав",
-            "Для WinDivert нужен elevated-запуск winws. Подтвердите UAC.",
+            "Не хватает прав",
+            "Подтвердите запрос администратора при включении обхода.",
             true,
         ),
         FaultCode::ConflictingBypass => (
             "Уже запущен другой обход",
-            "zapp остановит чужой winws при Stop. Закройте параллельные GUI-обходы вручную.",
+            "Закройте параллельные программы обхода и попробуйте снова.",
             true,
         ),
         FaultCode::LikelyBlockedByAv => (
-            "Похоже на блок антивируса",
-            "Добавьте папку Engine (winws.exe, WinDivert*) в исключения Defender/AV.",
+            "Похоже, мешает антивирус",
+            "Добавьте папку Engine в исключения антивируса и попробуйте снова.",
             true,
         ),
         FaultCode::StopFailed => (
             "Не удалось остановить",
-            "Попробуйте Stop ещё раз. При необходимости завершите winws.exe в диспетчере задач.",
+            "Нажмите выключение ещё раз или сбросьте ядро.",
             true,
         ),
         FaultCode::EngineNotInstalled => (
             "Engine не установлен",
-            "Откройте Updates → Engine и установите пакет Flowseal.",
+            "Откройте Updates → Engine и установите пакет.",
             false,
         ),
         FaultCode::DiagnosticsNeedsAdmin => (
-            "Диагностике нужны права",
-            "Один раз запустите Start (UAC), затем повторите Diagnostics.",
+            "Для проверки нужны права",
+            "Один раз включите обход (с подтверждением прав), затем повторите проверку.",
+            true,
+        ),
+        FaultCode::LaunchRefused => (
+            "Не удалось запустить обход",
+            "Проверьте Engine в Updates и включите снова. Если повторится — сообщите об ошибке.",
             true,
         ),
         FaultCode::Unknown => (
-            "Ошибка движка",
-            "Смотрите детали ниже. Повторите Start или запустите Diagnostics.",
+            "Не удалось выполнить действие",
+            "Попробуйте ещё раз. Если ошибка повторяется — нажмите «Сообщить об ошибке».",
             true,
         ),
     }
@@ -155,7 +174,18 @@ pub fn classify_spawn_failure(raw: &str) -> FaultCode {
         FaultCode::LikelyBlockedByAv
     } else if lower.contains("uac") {
         FaultCode::UacLaunchFailed
+    } else if lower.contains("refused:") {
+        FaultCode::LaunchRefused
     } else {
         FaultCode::Unknown
     }
+}
+
+pub fn fault_from_helper_message(message: String) -> EngineFault {
+    let code = if message.to_ascii_lowercase().contains("refused:") {
+        FaultCode::LaunchRefused
+    } else {
+        FaultCode::WinwsExitedImmediately
+    };
+    EngineFault::new(code, message)
 }

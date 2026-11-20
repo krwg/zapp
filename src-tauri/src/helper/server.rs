@@ -13,10 +13,13 @@ use std::os::windows::process::CommandExt;
 
 use crate::engine::kill_orphan_winws;
 
-use super::paths::{managed_engine_prefix, validate_winws_paths};
+use super::paths::{
+    apply_program_data_acl, managed_app_data_root, program_data_engine_prefix,
+    program_data_zapp_root, validate_winws_paths_any,
+};
 use super::protocol::{HelperRequest, HelperResponse, HelperStatus};
 use super::{helper_state_dir, token_path, HELPER_PORT};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -200,6 +203,22 @@ fn handle(runtime: &Mutex<Runtime>, req: HelperRequest) -> HelperResponse {
                 status: Some(status_of(&mut rt)),
             }
         }
+        HelperRequest::InstallEngine {
+            version,
+            source_dir,
+            ..
+        } => match install_engine_pack(&version, &source_dir) {
+            Ok(dest) => HelperResponse {
+                ok: true,
+                message: format!("installed engine {version} -> {}", dest.display()),
+                status: Some(status_of(&mut rt)),
+            },
+            Err(e) => HelperResponse {
+                ok: false,
+                message: e,
+                status: Some(status_of(&mut rt)),
+            },
+        },
         HelperRequest::Shutdown { .. } => {
             stop_child(&mut rt);
             HelperResponse {
@@ -211,15 +230,116 @@ fn handle(runtime: &Mutex<Runtime>, req: HelperRequest) -> HelperResponse {
     }
 }
 
+fn install_engine_pack(version: &str, source_dir: &str) -> Result<PathBuf, String> {
+    if version.is_empty()
+        || version == "."
+        || version == ".."
+        || version.contains(['/', '\\', ':'])
+    {
+        return Err("refused: invalid engine version".into());
+    }
+    for c in Path::new(source_dir).components() {
+        if matches!(c, std::path::Component::ParentDir) {
+            return Err("refused: source_dir must not contain '..'".into());
+        }
+    }
+
+    let source = Path::new(source_dir)
+        .canonicalize()
+        .map_err(|e| format!("refused: cannot resolve source_dir: {e}"))?;
+    let app_root = managed_app_data_root()
+        .canonicalize()
+        .unwrap_or_else(|_| managed_app_data_root());
+    let source_s = source.to_string_lossy();
+    let app_s = app_root.to_string_lossy();
+    if !source_s.eq_ignore_ascii_case(&app_s)
+        && !source_s
+            .to_ascii_lowercase()
+            .starts_with(&(app_s.to_ascii_lowercase() + "\\"))
+        && !source_s
+            .to_ascii_lowercase()
+            .starts_with(&(app_s.to_ascii_lowercase() + "/"))
+    {
+        return Err(format!(
+            "refused: source_dir must be under {} (got {})",
+            app_root.display(),
+            source.display()
+        ));
+    }
+    if !source.join("bin").join("winws.exe").is_file() {
+        return Err("refused: source_dir is not a Flowseal pack (bin/winws.exe missing)".into());
+    }
+
+    let dest_prefix = program_data_engine_prefix();
+    let dest = dest_prefix.join(version);
+    let zapp_root = program_data_zapp_root();
+    std::fs::create_dir_all(&zapp_root)
+        .map_err(|e| format!("cannot create ProgramData root: {e}"))?;
+    apply_program_data_acl(&zapp_root)?;
+
+    if dest.exists() {
+        std::fs::remove_dir_all(&dest)
+            .map_err(|e| format!("cannot clear previous pack: {e}"))?;
+    }
+    copy_dir_recursive(&source, &dest)?;
+    apply_program_data_acl(&zapp_root)?;
+
+    let current = dest_prefix.join("current");
+    let _ = std::fs::remove_dir_all(&current);
+    let _ = std::fs::remove_file(&current);
+    #[cfg(windows)]
+    {
+        let status = hidden("cmd")
+            .args([
+                "/C",
+                "mklink",
+                "/J",
+                current.to_str().unwrap_or_default(),
+                dest.to_str().unwrap_or_default(),
+            ])
+            .status()
+            .map_err(|e| format!("mklink failed: {e}"))?;
+        if !status.success() {
+            copy_dir_recursive(&dest, &current)?;
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        std::os::unix::fs::symlink(&dest, &current)
+            .map_err(|e| format!("symlink current failed: {e}"))?;
+    }
+
+    Ok(dest)
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dst).map_err(|e| format!("mkdir {}: {e}", dst.display()))?;
+    for entry in std::fs::read_dir(src).map_err(|e| format!("read_dir {}: {e}", src.display()))? {
+        let entry = entry.map_err(|e| format!("dir entry: {e}"))?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if from.is_dir() {
+            copy_dir_recursive(&from, &to)?;
+        } else {
+            if let Some(parent) = to.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+            }
+            std::fs::copy(&from, &to)
+                .map_err(|e| format!("copy {} -> {}: {e}", from.display(), to.display()))?;
+        }
+    }
+    Ok(())
+}
+
 fn spawn_winws(
     winws: &str,
     work_dir: &str,
     args: &[String],
     strategy: &str,
 ) -> Result<Child, String> {
-    let prefix = managed_engine_prefix();
     let (winws_path, work_path) =
-        validate_winws_paths(Path::new(winws), Path::new(work_dir), &prefix)?;
+        validate_winws_paths_any(Path::new(winws), Path::new(work_dir))?;
     let winws = winws_path.to_string_lossy();
     let work_dir = work_path.to_string_lossy();
 
@@ -314,6 +434,7 @@ fn request_token(req: &HelperRequest) -> &str {
         | HelperRequest::Start { token, .. }
         | HelperRequest::Stop { token }
         | HelperRequest::Reset { token }
+        | HelperRequest::InstallEngine { token, .. }
         | HelperRequest::Shutdown { token } => token,
     }
 }

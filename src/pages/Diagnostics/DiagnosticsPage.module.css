@@ -185,11 +185,25 @@
   color: var(--status-error, #c44);
 }
 
+.hostKind {
+  margin-left: 6px;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  opacity: 0.9;
+}
+
 .notesFull {
   margin: 0;
   font-size: var(--text-xs);
   color: var(--text-tertiary);
   white-space: normal;
+}
+
+.notesFull .detailLabel {
+  display: block;
+  margin-bottom: 4px;
 }
 
 .scoreTrack {

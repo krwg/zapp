@@ -4,8 +4,10 @@
 
 use std::path::{Component, Path, PathBuf};
 
-/// Managed engine packs live under `%APPDATA%\<id>\engine\<ver>\bin\winws.exe`.
+/// Per-user managed packs: `%APPDATA%\<id>\engine\<ver>\bin\winws.exe`.
 pub const APP_DATA_ID: &str = "app.zapp.desktop";
+/// Machine-wide packs (1b): `%ProgramData%\zapp\engine\<ver>\…`.
+pub const PROGRAM_DATA_ID: &str = "zapp";
 
 pub fn managed_engine_prefix() -> PathBuf {
     let base = std::env::var_os("APPDATA")
@@ -18,14 +20,44 @@ pub fn managed_engine_prefix() -> PathBuf {
     base.join(APP_DATA_ID).join("engine")
 }
 
+pub fn program_data_engine_prefix() -> PathBuf {
+    let base = std::env::var_os("ProgramData")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
+    base.join(PROGRAM_DATA_ID).join("engine")
+}
+
+/// Allowed engine roots: ProgramData first, then AppData (legacy / fallback).
+pub fn managed_engine_prefixes() -> Vec<PathBuf> {
+    vec![program_data_engine_prefix(), managed_engine_prefix()]
+}
+
+/// Validate against any managed prefix (ProgramData or AppData).
+pub fn validate_winws_paths_any(
+    winws: &Path,
+    work_dir: &Path,
+) -> Result<(PathBuf, PathBuf), String> {
+    let mut last = String::from("refused: no managed engine prefix available");
+    for prefix in managed_engine_prefixes() {
+        match validate_winws_paths(winws, work_dir, &prefix) {
+            Ok(ok) => return Ok(ok),
+            Err(e) => last = e,
+        }
+    }
+    Err(last)
+}
+
 /// Ensure `winws` / `work_dir` point at the managed pack layout only.
 ///
 /// Rules (after canonicalize when paths exist):
 /// - file name is `winws.exe`
 /// - parent dir is `bin`
-/// - engine root (`bin`'s parent) equals `work_dir`
-/// - engine root is a direct child of `allowed_engine_prefix` (…\engine\<ver>)
+/// - `work_dir` is either that `bin` dir (Flowseal cwd) or the pack root (parent of `bin`)
+/// - pack root is a direct child of `allowed_engine_prefix` (…\engine\<ver>)
 /// - no `..` components in the unresolved inputs
+///
+/// Returns `(winws_abs, cwd_abs)` where `cwd_abs` is the directory to use as process cwd
+/// (prefers `bin` when the caller passed pack root).
 pub fn validate_winws_paths(
     winws: &Path,
     work_dir: &Path,
@@ -66,13 +98,19 @@ pub fn validate_winws_paths(
         .parent()
         .ok_or_else(|| "refused: engine root missing".to_string())?;
 
-    if !path_eq(engine_root, &work_abs) {
+    // Strategy launcher uses `…\engine\<ver>\bin` as cwd; allow pack root too.
+    let cwd_abs = if path_eq(&work_abs, bin_dir) {
+        bin_dir.to_path_buf()
+    } else if path_eq(&work_abs, engine_root) {
+        bin_dir.to_path_buf()
+    } else {
         return Err(format!(
-            "refused: work_dir must be the engine pack root (expected {}, got {})",
+            "refused: work_dir must be pack root or bin (pack {}, bin {}, got {})",
             engine_root.display(),
+            bin_dir.display(),
             work_abs.display()
         ));
-    }
+    };
 
     let engine_parent = engine_root
         .parent()
@@ -94,7 +132,55 @@ pub fn validate_winws_paths(
         return Err("refused: invalid engine version directory".into());
     }
 
-    Ok((winws_abs, work_abs))
+    Ok((winws_abs, cwd_abs))
+}
+
+/// AppData root for this product (`%APPDATA%\app.zapp.desktop`).
+pub fn managed_app_data_root() -> PathBuf {
+    managed_engine_prefix()
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(managed_engine_prefix)
+}
+
+/// `%ProgramData%\zapp` (parent of `engine`).
+pub fn program_data_zapp_root() -> PathBuf {
+    program_data_engine_prefix()
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(program_data_engine_prefix)
+}
+
+/// Restrictive ACL on `%ProgramData%\zapp` (SYSTEM+Admins full, Users RX).
+/// Elevated helper should call this after creating the tree.
+pub fn apply_program_data_acl(zapp_root: &Path) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use std::process::Command;
+        let path = zapp_root.to_string_lossy();
+        let status = Command::new("icacls")
+            .args([
+                path.as_ref(),
+                "/inheritance:r",
+                "/grant:r",
+                "*S-1-5-18:(OI)(CI)F",
+                "/grant:r",
+                "*S-1-5-32-544:(OI)(CI)F",
+                "/grant:r",
+                "*S-1-5-32-545:(OI)(CI)RX",
+            ])
+            .status()
+            .map_err(|e| format!("icacls spawn failed: {e}"))?;
+        if !status.success() {
+            return Err(format!("icacls exited with {status}"));
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = zapp_root;
+        Ok(())
+    }
 }
 
 fn reject_dotdot(path: &Path, label: &str) -> Result<(), String> {
@@ -160,7 +246,7 @@ mod tests {
     }
 
     #[test]
-    fn accepts_managed_layout() {
+    fn accepts_managed_layout_with_bin_cwd() {
         let root = scratch();
         let prefix = root.join("engine");
         let pack = prefix.join("1.10.4");
@@ -169,13 +255,15 @@ mod tests {
         let winws = bin.join("winws.exe");
         fs::write(&winws, b"fake").unwrap();
 
-        let (w, d) = validate_winws_paths(&winws, &pack, &prefix).unwrap();
+        // Flowseal strategy cwd is `bin`.
+        let (w, d) = validate_winws_paths(&winws, &bin, &prefix).unwrap();
         assert!(w.ends_with("winws.exe"));
-        assert_eq!(
-            w.parent().unwrap().file_name().unwrap().to_string_lossy(),
-            "bin"
-        );
-        assert!(path_eq(&d, &pack.canonicalize().unwrap()));
+        assert!(path_eq(&d, &bin.canonicalize().unwrap()));
+
+        // Pack root is also accepted; cwd normalized to bin.
+        let (w2, d2) = validate_winws_paths(&winws, &pack, &prefix).unwrap();
+        assert!(w2.ends_with("winws.exe"));
+        assert!(path_eq(&d2, &bin.canonicalize().unwrap()));
 
         let _ = fs::remove_dir_all(&root);
     }

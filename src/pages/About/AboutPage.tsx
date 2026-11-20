@@ -4,6 +4,7 @@
 
 import { Bug, ExternalLink } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { PageHeader } from '@/components/layout/PageHeader/PageHeader'
 import { Button } from '@/components/ui/Button/Button'
 import { Dialog } from '@/components/ui/Dialog/Dialog'
@@ -11,6 +12,7 @@ import { useAppState } from '@/context/AppStateContext'
 import { useLocale } from '@/context/LocaleContext'
 import { useUiPrefs } from '@/context/UiPrefsContext'
 import shieldMark from '@/assets/brand/shield-128.png'
+import type { AboutLocationState, BugReportPrefill } from '@/types/bugReport'
 import { formatVersion } from '@/utils/version'
 import styles from './AboutPage.module.css'
 
@@ -20,6 +22,8 @@ const YEAR = 2026
 export function AboutPage() {
   const { snapshot, getRecentErrors } = useAppState()
   const { t } = useLocale()
+  const location = useLocation()
+  const navigate = useNavigate()
   const { bugReportHintSeen, setPref } = useUiPrefs()
   const [reportOpen, setReportOpen] = useState(false)
   const [summary, setSummary] = useState('')
@@ -39,11 +43,23 @@ export function AboutPage() {
     }
   }, [bugReportHintSeen, setPref])
 
-  if (!snapshot) return null
+  const applyPrefill = (prefill?: BugReportPrefill) => {
+    if (!prefill) return
+    if (prefill.summary) setSummary(prefill.summary)
+    if (prefill.steps !== undefined) setSteps(prefill.steps)
+    if (prefill.expected) setExpected(prefill.expected)
+    if (prefill.actual) setActual(prefill.actual)
+    if (prefill.areas) {
+      setAreas((a) => ({
+        bypass: prefill.areas?.bypass ?? a.bypass,
+        smart: prefill.areas?.smart ?? a.smart,
+        updates: prefill.areas?.updates ?? a.updates,
+      }))
+    }
+  }
 
-  const { about, system, settings } = snapshot
-
-  const openReport = async () => {
+  const openReport = async (prefill?: BugReportPrefill) => {
+    applyPrefill(prefill)
     try {
       setRecentErrors(await getRecentErrors())
     } catch {
@@ -51,6 +67,19 @@ export function AboutPage() {
     }
     setReportOpen(true)
   }
+
+  useEffect(() => {
+    const state = location.state as AboutLocationState | null
+    if (!state?.openBugReport) return
+    void openReport(state.bugPrefill)
+    navigate('.', { replace: true, state: {} })
+    // intentionally only when landing with openBugReport
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.key])
+
+  if (!snapshot) return null
+
+  const { about, system, settings } = snapshot
 
   const buildIssue = () => {
     const areaList = [

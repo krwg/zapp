@@ -36,6 +36,7 @@ export function OverviewPage() {
     resetEngine,
     checkService,
     checkAllServices,
+    openBugReport,
     busy,
   } = useAppState()
   const { t, locale } = useLocale()
@@ -128,6 +129,11 @@ export function OverviewPage() {
           busy={busy.engine}
           onToggle={() => void toggleEngine()}
           onReset={() => void resetEngine()}
+          onReportBug={
+            connection.lastError
+              ? () => openBugReport(connection.lastError!, { bypass: true })
+              : undefined
+          }
         />
 
         <section className={styles.modeCard}>

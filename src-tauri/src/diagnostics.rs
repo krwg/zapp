@@ -10,7 +10,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::engine::{
     diag_targets, kill_orphan_winws, latency_stats, probe_resolved_parallel,
-    rank_score_with_latency, resolve_diag_targets, run_preflight_scoped, score_by_service,
+    rank_score_full, resolve_diag_targets, run_preflight_scoped, score_by_service,
     soft_contribution, strategy_prior_bonus, PreflightScope,
 };
 use crate::model::*;
@@ -343,7 +343,7 @@ fn run_diagnostics_worker_inner(
         let score = if startup_failed {
             0
         } else {
-            rank_score_with_latency(adaptive.score, &name, latency_min)
+            rank_score_full(adaptive.score, &name, latency_min, soft_score)
         };
         let success = !startup_failed && adaptive.success && score >= PASS_THRESHOLD;
         let latency_ms = latency_min;
@@ -361,6 +361,19 @@ fn run_diagnostics_worker_inner(
             })
             .collect::<Vec<_>>()
             .join(" · ");
+
+        let failed_hosts: Vec<&str> = host_results
+            .iter()
+            .filter(|(t, probes)| t.critical && probes.iter().all(|p| !p.ok))
+            .map(|(t, _)| t.host)
+            .collect();
+        let soft_fail_notes: Vec<String> = host_results
+            .iter()
+            .filter(|(t, probes)| !t.critical && probes.iter().all(|p| !p.ok))
+            .filter_map(|(t, probes)| {
+                probes.first().map(|p| format!("{} ({})", t.host, p.note))
+            })
+            .collect();
 
         let services: Vec<DiagnosticServiceScore> = adaptive
             .services
@@ -401,17 +414,16 @@ fn run_diagnostics_worker_inner(
         let notes = if let Err(e) = &start_res {
             format!("Start failed: {e}")
         } else if died_during_probes {
-            "Startup failed: winws exited during probes (WinDivert/AV?)".into()
+            "Startup failed: winws exited during probes (driver/AV?)".into()
         } else if success {
             let ok = adaptive.all_probes.iter().filter(|p| p.ok).count();
-            let port_hit = adaptive
-                .all_probes
-                .iter()
-                .find(|p| p.ok && p.note.starts_with("TCP:"))
-                .map(|p| format!(" · {}", p.note))
-                .unwrap_or_default();
+            let soft_warn = if soft_fail_notes.is_empty() {
+                String::new()
+            } else {
+                format!(" · soft gaps: {}", soft_fail_notes.join(", "))
+            };
             format!(
-                "{ok}/{} ok · soft {soft_score} · rank {score} · {service_summary}{port_hit}",
+                "{ok}/{} probes ok · soft {soft_score} · rank {score} · {service_summary}{soft_warn}",
                 adaptive.all_probes.len()
             )
         } else if !adaptive.services.is_empty() {
@@ -422,7 +434,12 @@ fn run_diagnostics_worker_inner(
                 .map(|s| s.service.as_str())
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!("Weak service(s): {failed} · {service_summary}")
+            let hosts = if failed_hosts.is_empty() {
+                String::new()
+            } else {
+                format!(" · down: {}", failed_hosts.join(", "))
+            };
+            format!("Weak: {failed}{hosts} · {service_summary}")
         } else {
             adaptive
                 .all_probes
@@ -479,9 +496,13 @@ fn run_diagnostics_worker_inner(
                 Some((_, best_score)) if score <= *best_score => {}
                 _ => best = Some((name.clone(), score)),
             }
-            // Fast mode: first dual-service pass wins.
+            // Fast mode: stop on a strong pass (not merely the first weak pass).
             if matches!(mode, DiagnosticsMode::Fast) {
-                break;
+                let strong = score >= 88 && soft_score >= 40;
+                let solid = score >= 92;
+                if strong || solid {
+                    break;
+                }
             }
         }
     }
@@ -498,7 +519,12 @@ fn run_diagnostics_worker_inner(
         store
             .diagnostics
             .results
-            .sort_by(|a, b| b.score.cmp(&a.score).then(a.latency_ms.cmp(&b.latency_ms)));
+            .sort_by(|a, b| {
+                b.score
+                    .cmp(&a.score)
+                    .then(b.soft_score.cmp(&a.soft_score))
+                    .then(a.latency_ms.cmp(&b.latency_ms))
+            });
     }) {
         bail(&app, &state, &run_id, &cancel, &snapshot);
         return;

@@ -21,6 +21,13 @@
 | `likelyBlockedByAv` | эвристика AV | текст ошибки / мгновенный exit | исключения Defender |
 | `stopFailed` | taskkill не смог | stop status | ручной kill |
 | `diagnosticsNeedsAdmin` | diag без elevate path | flag | Start один раз |
+| `launchRefused` | helper path/policy refuse | `refused:` в ответе helper | Updates → Engine, повтор Start |
+
+## UI контракт (ошибки)
+
+- Toast / `connection.lastError` — **только** понятный текст (`title — hint`).
+- Технические детали (`refused:…`, пути, raw OS) — в лог и в history для bug report.
+- «Сообщить об ошибке» из toast или карточки ошибки открывает диалог репорта с prefill (~90%), шаги оставляет пользователю.
 
 ## Дополнительные сценарии (плановый детект)
 
@@ -50,7 +57,7 @@
 24. **Sleep/hibernate** — refresh_status_from_os на resume.
 25. **Single-instance second launch** — focus existing (Zapret-GUI pattern).
 
-## UI контракт
+## UI контракт (прочее)
 
 - Любая ошибка команды → toast `error` + `connection.lastError` на Overview.
 - Никаких unhandled rejection.

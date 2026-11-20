@@ -18,6 +18,7 @@ import styles from './DiagnosticsPage.module.css'
 
 function rankKey(a: DiagnosticStrategyResult, b: DiagnosticStrategyResult) {
   if (b.score !== a.score) return b.score - a.score
+  if (b.softScore !== a.softScore) return b.softScore - a.softScore
   const la = a.latencyMs ?? 99999
   const lb = b.latencyMs ?? 99999
   return la - lb
@@ -116,6 +117,8 @@ export function DiagnosticsPage() {
                             <div className={styles.rankSummary}>
                               {t('smartCheck.score')}: <strong>{row.score}</strong>
                               <span className={styles.dot}>·</span>
+                              {t('smartCheck.softScore')}: <strong>{row.softScore}</strong>
+                              <span className={styles.dot}>·</span>
                               {t('smartCheck.latency')}:{' '}
                               <strong>{formatLatency(row.latencyMs)}</strong>
                             </div>
@@ -174,6 +177,11 @@ export function DiagnosticsPage() {
                                 <div key={`${h.host}-${i}`} className={styles.hostRow}>
                                   <span className={h.ok ? styles.hostOk : styles.hostFail}>
                                     {h.host}
+                                    <span className={styles.hostKind}>
+                                      {h.critical
+                                        ? t('smartCheck.hostCritical')
+                                        : t('smartCheck.hostSoft')}
+                                    </span>
                                   </span>
                                   <span>
                                     {formatLatency(h.latencyMs)} · {h.note}
@@ -182,7 +190,12 @@ export function DiagnosticsPage() {
                               ))}
                             </div>
                           ) : null}
-                          {row.notes ? <p className={styles.notesFull}>{row.notes}</p> : null}
+                          {row.notes ? (
+                            <p className={styles.notesFull}>
+                              <span className={styles.detailLabel}>{t('smartCheck.analysis')}</span>
+                              {row.notes}
+                            </p>
+                          ) : null}
                         </div>
                       ) : null}
                     </div>

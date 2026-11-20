@@ -264,7 +264,7 @@ impl ManagedEngine {
             t_pf.elapsed().as_secs_f64() * 1000.0
         );
         if let Some(fault) = report.blocking_fault {
-            log::warn!("preflight blocked start: {}", fault.message());
+            log::warn!("preflight blocked start: {}", fault.log_line());
             inner.status = EngineStatus::Error;
             inner.last_error = Some(fault.message());
             return Err(fault.into());
@@ -402,7 +402,7 @@ impl ManagedEngine {
                             "winws did not stay running after start"
                         },
                     );
-                    log::error!("{}", fault.message());
+                    log::error!("{}", fault.log_line());
                     inner.status = EngineStatus::Error;
                     inner.last_error = Some(fault.message());
                     inner.child = None;
@@ -412,7 +412,7 @@ impl ManagedEngine {
                 }
             }
             Err(fault) => {
-                log::error!("winws spawn failed: {}", fault.message());
+                log::error!("winws spawn failed: {}", fault.log_line());
                 inner.status = EngineStatus::Error;
                 inner.last_error = Some(fault.message());
                 inner.via_helper = false;

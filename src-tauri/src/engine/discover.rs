@@ -25,6 +25,16 @@ fn resolve_engine_layout_inner(app_data: &Path) -> EngineLayout {
         }
     }
 
+    // Prefer machine-wide ProgramData packs (1b), then per-user AppData.
+    let program_data = crate::helper::paths::program_data_engine_prefix();
+    let program_current = program_data.join("current");
+    if looks_like_pack(&program_current) {
+        return EngineLayout::from_pack(program_current);
+    }
+    if let Some(layout) = newest_under(program_data) {
+        return layout;
+    }
+
     let current = app_data.join("engine").join("current");
     if looks_like_pack(&current) {
         return EngineLayout::from_pack(current);
