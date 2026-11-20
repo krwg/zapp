@@ -214,33 +214,6 @@ export function SettingsPage() {
 
         <SettingsGroup>
           <SettingsRow
-            title={t('settings.telegramAutoStart')}
-            hint={t('settings.telegramAutoStartHint')}
-          >
-            <Toggle
-              checked={settings.telegramProxyEnabled}
-              disabled={disabled}
-              onChange={(checked) =>
-                void updateSettings({ telegramProxyEnabled: checked })
-              }
-            />
-          </SettingsRow>
-          <SettingsRow
-            title={t('settings.telegramOfferLink')}
-            hint={t('settings.telegramOfferLinkHint')}
-          >
-            <Toggle
-              checked={settings.telegramOfferLinkOnStart}
-              disabled={disabled}
-              onChange={(checked) =>
-                void updateSettings({ telegramOfferLinkOnStart: checked })
-              }
-            />
-          </SettingsRow>
-        </SettingsGroup>
-
-        <SettingsGroup>
-          <SettingsRow
             title={t('settings.autoDiagnostics')}
             hint={t('settings.diagnosticsDesc')}
           >

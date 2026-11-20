@@ -1,6 +1,6 @@
 [package]
 name = "zapp"
-version = "0.2.6"
+version = "0.2.5"
 description = "zapp — desktop client kernel for the zapret engine"
 authors = ["krwg <shevotsukov@icloud.com>"]
 license = "MIT"

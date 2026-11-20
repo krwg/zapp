@@ -14,8 +14,7 @@ use std::time::Duration;
 use std::os::windows::process::CommandExt;
 
 use crate::engine::github::{
-    compare_semver, fetch_flowseal_latest, fetch_tg_proxy_latest, fetch_zapp_latest, FLOWSEAL_REPO,
-    TG_PROXY_REPO, ZAPP_REPO,
+    compare_semver, fetch_flowseal_latest, fetch_zapp_latest, FLOWSEAL_REPO, ZAPP_REPO,
 };
 use crate::engine::managed::EngineLayout;
 use crate::error::{AppError, AppResult};
@@ -52,7 +51,6 @@ impl UpdateManager {
     pub fn check_all(&self) -> AppResult<Vec<UpdateChannel>> {
         let flowseal = fetch_flowseal_latest().ok();
         let zapp = fetch_zapp_latest().ok();
-        let tg = fetch_tg_proxy_latest().ok();
         let mut channels = self.channels.lock().expect("updates lock");
         let now = now_iso();
 
@@ -93,24 +91,6 @@ impl UpdateManager {
                             };
                     }
                 }
-                UpdateChannelId::TelegramProxy => {
-                    if let Some(ref rel) = tg {
-                        let latest = rel.version().to_string();
-                        channel.latest_version = latest.clone();
-                        channel.release_notes = rel.body.clone().unwrap_or_else(|| {
-                            format!("Release {latest} from {TG_PROXY_REPO}")
-                        });
-                        let missing = channel.current_version == "0.0.0"
-                            || channel.current_version == "unknown";
-                        channel.status = if missing
-                            || compare_semver(&latest, &channel.current_version).is_gt()
-                        {
-                            UpdateChannelStatus::Available
-                        } else {
-                            UpdateChannelStatus::UpToDate
-                        };
-                    }
-                }
             }
         }
 
@@ -123,7 +103,6 @@ impl UpdateManager {
                 self.update_flowseal_pack(id)
             }
             UpdateChannelId::Application => self.update_application(),
-            UpdateChannelId::TelegramProxy => self.update_tg_proxy(),
         }
     }
 
@@ -205,9 +184,6 @@ impl UpdateManager {
                 }
                 UpdateChannelId::Application => {
                     outcomes.push(self.update_channel(UpdateChannelId::Application)?);
-                }
-                UpdateChannelId::TelegramProxy => {
-                    outcomes.push(self.update_channel(UpdateChannelId::TelegramProxy)?);
                 }
             }
         }
@@ -301,88 +277,6 @@ impl UpdateManager {
         Ok(UpdateOutcome {
             channel,
             layout: Some(layout),
-            restart_required: false,
-        })
-    }
-
-    fn update_tg_proxy(&self) -> AppResult<UpdateOutcome> {
-        {
-            let mut channels = self.channels.lock().expect("updates lock");
-            let channel = channels
-                .iter_mut()
-                .find(|c| c.id == UpdateChannelId::TelegramProxy)
-                .ok_or_else(|| AppError::from("Update channel not found"))?;
-            if channel.status == UpdateChannelStatus::UpToDate
-                && crate::engine::tg_proxy::exe_path(&self.app_data).is_file()
-            {
-                return Ok(UpdateOutcome {
-                    channel: channel.clone(),
-                    layout: None,
-                    restart_required: false,
-                });
-            }
-            channel.status = UpdateChannelStatus::Downloading;
-            channel.download_progress = Some(0);
-        }
-
-        let release = fetch_tg_proxy_latest()?;
-        let asset = release
-            .preferred_tg_proxy_asset()
-            .ok_or_else(|| AppError::from("No TgWsProxy_windows.exe in Flowseal/tg-ws-proxy release"))?
-            .clone();
-        let version = release.version().to_string();
-
-        let downloads = self.app_data.join("downloads");
-        fs::create_dir_all(&downloads).map_err(|e| AppError::from(e.to_string()))?;
-        let dest = downloads.join(&asset.name);
-
-        download_with_progress(&asset.browser_download_url, &dest, |pct| {
-            let mut channels = self.channels.lock().expect("updates lock");
-            if let Some(channel) = channels
-                .iter_mut()
-                .find(|c| c.id == UpdateChannelId::TelegramProxy)
-            {
-                channel.download_progress = Some(pct);
-                channel.status = UpdateChannelStatus::Downloading;
-            }
-        })?;
-
-        {
-            let mut channels = self.channels.lock().expect("updates lock");
-            if let Some(channel) = channels
-                .iter_mut()
-                .find(|c| c.id == UpdateChannelId::TelegramProxy)
-            {
-                channel.status = UpdateChannelStatus::Installing;
-                channel.download_progress = Some(100);
-            }
-        }
-
-        let bytes = fs::read(&dest).map_err(|e| AppError::from(e.to_string()))?;
-        crate::engine::tg_proxy::install_exe_bytes(&self.app_data, &version, &bytes)?;
-
-        let mut channels = self.channels.lock().expect("updates lock");
-        if let Some(channel) = channels
-            .iter_mut()
-            .find(|c| c.id == UpdateChannelId::TelegramProxy)
-        {
-            channel.status = UpdateChannelStatus::UpToDate;
-            channel.current_version = version.clone();
-            channel.latest_version = version;
-            channel.download_progress = None;
-            channel.last_checked_at = Some(now_iso());
-            channel.release_notes = release.body.clone().unwrap_or_default();
-        }
-
-        let channel = channels
-            .iter()
-            .find(|c| c.id == UpdateChannelId::TelegramProxy)
-            .cloned()
-            .ok_or_else(|| AppError::from("Update channel not found"))?;
-
-        Ok(UpdateOutcome {
-            channel,
-            layout: None,
             restart_required: false,
         })
     }

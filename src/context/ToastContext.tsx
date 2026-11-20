@@ -16,8 +16,6 @@ export interface ToastPayload {
   title: string
   description?: string
   tone?: ToastTone
-  actionLabel?: string
-  onAction?: () => void
 }
 
 interface ToastContextValue {
@@ -44,8 +42,6 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           title: payload.title,
           description: payload.description,
           tone,
-          actionLabel: payload.actionLabel,
-          onAction: payload.onAction,
         },
       ])
       const ms = tone === 'error' ? 8000 : 3800

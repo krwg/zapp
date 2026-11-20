@@ -9,9 +9,8 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::engine::{
-    diag_targets, kill_orphan_winws, latency_stats, probe_resolved_parallel,
-    rank_score_with_latency, resolve_diag_targets, run_preflight_scoped, score_by_service,
-    soft_contribution, strategy_prior_bonus, PreflightScope,
+    diag_targets, kill_orphan_winws, probe_resolved_parallel, rank_score, resolve_diag_targets,
+    run_preflight_scoped, score_by_service, strategy_prior_bonus, PreflightScope,
 };
 use crate::model::*;
 use crate::state::{AppState, Store};
@@ -25,7 +24,7 @@ struct Snapshot {
 }
 
 fn cancelled(cancel: &Arc<Mutex<bool>>) -> bool {
-    *cancel.lock().unwrap_or_else(|e| e.into_inner())
+    *cancel.lock().expect("flag")
 }
 
 fn superseded(state: &AppState, run_id: &str) -> bool {
@@ -333,20 +332,17 @@ fn run_diagnostics_worker_inner(
                 all_probes: Vec::new(),
             }
         };
-        let (latency_min, latency_median_ms, latency_max_ms) =
-            latency_stats(&adaptive.all_probes);
-        let soft_score = if startup_failed {
-            0
-        } else {
-            soft_contribution(&host_results)
-        };
         let score = if startup_failed {
             0
         } else {
-            rank_score_with_latency(adaptive.score, &name, latency_min)
+            rank_score(adaptive.score, &name)
         };
         let success = !startup_failed && adaptive.success && score >= PASS_THRESHOLD;
-        let latency_ms = latency_min;
+        let latency_ms = adaptive
+            .all_probes
+            .iter()
+            .filter_map(|p| p.latency_ms)
+            .min();
 
         let service_summary = adaptive
             .services
@@ -362,48 +358,26 @@ fn run_diagnostics_worker_inner(
             .collect::<Vec<_>>()
             .join(" · ");
 
-        let services: Vec<DiagnosticServiceScore> = adaptive
-            .services
-            .iter()
-            .map(|s| {
-                let latency_ms = host_results
-                    .iter()
-                    .filter(|(t, _)| t.service == s.service)
-                    .flat_map(|(_, probes)| probes.iter().filter_map(|p| p.latency_ms))
-                    .min();
-                DiagnosticServiceScore {
-                    service: s.service.clone(),
-                    score: s.score,
-                    ok: s.ok,
-                    latency_ms,
-                }
-            })
-            .collect();
-
-        let hosts: Vec<DiagnosticHostDetail> = host_results
-            .iter()
-            .flat_map(|(target, probes)| {
-                probes.iter().map(|p| DiagnosticHostDetail {
-                    host: if target.port == 443 {
-                        target.host.to_string()
-                    } else {
-                        format!("{}:{}", target.host, target.port)
-                    },
-                    service: target.service.to_string(),
-                    ok: p.ok,
-                    latency_ms: p.latency_ms,
-                    note: p.note.clone(),
-                    critical: target.critical,
-                })
-            })
-            .collect();
-
         let notes = if let Err(e) = &start_res {
             format!("Start failed: {e}")
         } else if died_during_probes {
             "Startup failed: winws exited during probes (WinDivert/AV?)".into()
         } else if success {
             let ok = adaptive.all_probes.iter().filter(|p| p.ok).count();
+            let avg = adaptive
+                .all_probes
+                .iter()
+                .filter_map(|p| p.latency_ms)
+                .sum::<u32>()
+                .checked_div(
+                    adaptive
+                        .all_probes
+                        .iter()
+                        .filter(|p| p.latency_ms.is_some())
+                        .count()
+                        .max(1) as u32,
+                )
+                .unwrap_or(0);
             let port_hit = adaptive
                 .all_probes
                 .iter()
@@ -411,7 +385,7 @@ fn run_diagnostics_worker_inner(
                 .map(|p| format!(" · {}", p.note))
                 .unwrap_or_default();
             format!(
-                "{ok}/{} ok · soft {soft_score} · rank {score} · {service_summary}{port_hit}",
+                "{ok}/{} ok · avg {avg} ms · rank {score} · {service_summary}{port_hit}",
                 adaptive.all_probes.len()
             )
         } else if !adaptive.services.is_empty() {
@@ -438,12 +412,7 @@ fn run_diagnostics_worker_inner(
             strategy_type,
             success,
             latency_ms,
-            latency_median_ms,
-            latency_max_ms,
             score,
-            soft_score,
-            services,
-            hosts,
             notes,
             tested_at: now_iso(),
         };

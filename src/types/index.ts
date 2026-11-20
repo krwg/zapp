@@ -80,34 +80,13 @@ export interface SystemInfo {
   elevated: boolean
 }
 
-export interface DiagnosticHostDetail {
-  host: string
-  service: string
-  ok: boolean
-  latencyMs: number | null
-  note: string
-  critical: boolean
-}
-
-export interface DiagnosticServiceScore {
-  service: string
-  score: number
-  ok: boolean
-  latencyMs: number | null
-}
-
 export interface DiagnosticStrategyResult {
   id: string
   name: string
   strategyType: string
   success: boolean
   latencyMs: number | null
-  latencyMedianMs: number | null
-  latencyMaxMs: number | null
   score: number
-  softScore: number
-  services: DiagnosticServiceScore[]
-  hosts: DiagnosticHostDetail[]
   notes: string
   testedAt: string
 }
@@ -127,7 +106,7 @@ export interface DiagnosticRun {
 }
 
 export interface UpdateChannel {
-  id: 'application' | 'engine' | 'strategies' | 'telegramProxy'
+  id: 'application' | 'engine' | 'strategies'
   title: string
   description: string
   currentVersion: string
@@ -140,18 +119,6 @@ export interface UpdateChannel {
 }
 
 export type DiagnosticsMode = 'fast' | 'thorough'
-
-export interface TelegramProxyState {
-  status: EngineStatus
-  installed: boolean
-  version: string
-  host: string
-  port: number
-  sessionStartedAt: string | null
-  uptimeSeconds: number
-  lastError: string | null
-  proxyLink: string
-}
 
 export interface AppSettings {
   appearance: ThemeMode
@@ -167,8 +134,6 @@ export interface AppSettings {
   advancedLogging: boolean
   enginePath: string | null
   strategiesPath: string | null
-  telegramProxyEnabled: boolean
-  telegramOfferLinkOnStart: boolean
 }
 
 export interface AppAbout {
@@ -182,7 +147,6 @@ export interface AppAbout {
 
 export interface AppSnapshot {
   connection: ConnectionState
-  telegram: TelegramProxyState
   activeProfile: Profile | null
   profiles: Profile[]
   services: MonitoredService[]

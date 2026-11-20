@@ -13,7 +13,6 @@ mod state;
 mod tray;
 mod util;
 
-use model::UpdateChannelId;
 use state::AppState;
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 
@@ -85,25 +84,7 @@ pub fn run() {
             let auto_check = state.snapshot().settings.auto_check_updates;
             let auto_install = state.snapshot().settings.auto_install_updates;
             let start_with_system = state.snapshot().settings.start_with_system;
-            let tg_auto = state.snapshot().settings.telegram_proxy_enabled;
             app.manage(state);
-
-            if tg_auto {
-                let handle = app.handle().clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_secs(2));
-                    let Some(state) = handle.try_state::<AppState>() else {
-                        return;
-                    };
-                    if !state.tg_proxy.is_installed() {
-                        let _ = state.update_channel(UpdateChannelId::TelegramProxy);
-                    }
-                    match state.tg_proxy.set_running(true) {
-                        Ok(_) => state.history.push("telegram", "Telegram proxy auto-started"),
-                        Err(e) => log::warn!("telegram auto-start failed: {e}"),
-                    }
-                });
-            }
 
             tray::setup_tray(app.handle())?;
 
@@ -155,7 +136,7 @@ pub fn run() {
                         Ok(true) => {
                             log::info!("application installer launched — exiting for update");
                             let _ = handle.emit("app:quit-for-update", ());
-                            state.shutdown_for_exit();
+                            state.engine.shutdown_for_exit();
                             std::thread::sleep(std::time::Duration::from_millis(400));
                             handle.exit(0);
                         }
@@ -186,17 +167,13 @@ pub fn run() {
             commands::set_theme,
             commands::run_preflight,
             commands::reset_engine,
-            commands::set_telegram_proxy_running,
-            commands::get_telegram_proxy_link,
-            commands::open_external_url,
-            commands::get_recent_errors,
         ])
         .build(tauri::generate_context!())
         .expect("error while building zapp")
         .run(|app, event| {
             if matches!(event, RunEvent::Exit | RunEvent::ExitRequested { .. }) {
                 if let Some(state) = app.try_state::<AppState>() {
-                    state.shutdown_for_exit();
+                    state.engine.shutdown_for_exit();
                 }
             }
         });

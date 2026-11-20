@@ -6,7 +6,6 @@ import { useEffect, useRef, useState } from 'react'
 import { ChevronDown, Link as LinkIcon } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ConnectionCard } from '@/components/domain/ConnectionCard/ConnectionCard'
-import { TelegramProxyCard } from '@/components/domain/TelegramProxyCard/TelegramProxyCard'
 import { PageHeader } from '@/components/layout/PageHeader/PageHeader'
 import { Button } from '@/components/ui/Button/Button'
 import { Hint } from '@/components/ui/Hint/Hint'
@@ -14,7 +13,6 @@ import { StatusBadge } from '@/components/ui/StatusBadge/StatusBadge'
 
 import { useAppState } from '@/context/AppStateContext'
 import { useLocale } from '@/context/LocaleContext'
-import { useUiPrefs } from '@/context/UiPrefsContext'
 import { formatDateTime, formatLatency, formatRelative } from '@/utils/format'
 import { sourceLabelKey } from '@/utils/modeLabels'
 import { serviceIcon } from '@/utils/serviceIcons'
@@ -36,35 +34,14 @@ export function OverviewPage() {
     diagnosticsLive,
     toggleEngine,
     resetEngine,
-    toggleTelegramProxy,
-    openTelegramProxyLink,
-    copyTelegramProxyLink,
     checkService,
     checkAllServices,
     busy,
   } = useAppState()
   const { t, locale } = useLocale()
-  const { tgProxyLinkOffered, setPref } = useUiPrefs()
   const navigate = useNavigate()
   const [modeOpen, setModeOpen] = useState(false)
-  const [offerTgLink, setOfferTgLink] = useState(false)
   const lastSilentProbeAt = useRef(0)
-  const prevTgStatus = useRef<string | null>(null)
-
-  useEffect(() => {
-    if (!snapshot) return
-    const prev = prevTgStatus.current
-    const cur = snapshot.telegram.status
-    prevTgStatus.current = cur
-    if (
-      prev !== 'running' &&
-      cur === 'running' &&
-      !tgProxyLinkOffered &&
-      snapshot.settings.telegramOfferLinkOnStart
-    ) {
-      setOfferTgLink(true)
-    }
-  }, [snapshot, tgProxyLinkOffered])
 
   useEffect(() => {
     if (!snapshot) return
@@ -79,7 +56,7 @@ export function OverviewPage() {
 
   if (!snapshot) return null
 
-  const { connection, telegram, activeProfile, services, system } = snapshot
+  const { connection, activeProfile, services, system } = snapshot
   const neverChecked =
     !activeProfile?.lastCheckedAt &&
     !(diagnosticsLive?.results?.length) &&
@@ -151,19 +128,6 @@ export function OverviewPage() {
           busy={busy.engine}
           onToggle={() => void toggleEngine()}
           onReset={() => void resetEngine()}
-        />
-
-        <TelegramProxyCard
-          telegram={telegram}
-          busy={busy.telegram}
-          offerLink={offerTgLink}
-          onToggle={() => void toggleTelegramProxy()}
-          onOpenTelegram={() => void openTelegramProxyLink()}
-          onCopyLink={() => void copyTelegramProxyLink()}
-          onDismissLinkOffer={() => {
-            setOfferTgLink(false)
-            setPref('tgProxyLinkOffered', true)
-          }}
         />
 
         <section className={styles.modeCard}>

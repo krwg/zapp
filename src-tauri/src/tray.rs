@@ -59,7 +59,7 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
             }
             "quit" => {
                 if let Some(state) = app.try_state::<AppState>() {
-                    state.shutdown_for_exit();
+                    state.engine.shutdown_for_exit();
                 }
                 app.exit(0);
             }

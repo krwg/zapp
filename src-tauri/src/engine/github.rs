@@ -7,7 +7,6 @@ use serde::Deserialize;
 use crate::error::{AppError, AppResult};
 
 pub const FLOWSEAL_REPO: &str = "Flowseal/zapret-discord-youtube";
-pub const TG_PROXY_REPO: &str = "Flowseal/tg-ws-proxy";
 pub const ZAPP_REPO: &str = "krwg/zapp";
 
 #[derive(Debug, Clone, Deserialize)]
@@ -60,37 +59,12 @@ pub fn fetch_zapp_latest() -> AppResult<GithubRelease> {
     fetch_latest_release(ZAPP_REPO)
 }
 
-pub fn fetch_tg_proxy_latest() -> AppResult<GithubRelease> {
-    fetch_latest_release(TG_PROXY_REPO)
-}
-
 impl GithubRelease {
     pub fn preferred_zip_asset(&self) -> Option<&GithubAsset> {
         self.assets
             .iter()
             .find(|a| a.name.ends_with(".zip"))
             .or_else(|| self.assets.iter().find(|a| a.name.ends_with(".tar.gz")))
-    }
-
-    /// Prefer `TgWsProxy_windows.exe` (Win10+ x64 tray binary).
-    pub fn preferred_tg_proxy_asset(&self) -> Option<&GithubAsset> {
-        let rank = |name: &str| -> u8 {
-            let n = name.to_ascii_lowercase();
-            if n == "tgwsproxy_windows.exe" {
-                0
-            } else if n.contains("windows") && n.ends_with(".exe") && !n.contains("arm") && !n.contains("_7_")
-            {
-                1
-            } else if n.contains("windows") && n.ends_with(".exe") {
-                2
-            } else {
-                9
-            }
-        };
-        self.assets
-            .iter()
-            .filter(|a| a.name.to_ascii_lowercase().ends_with(".exe"))
-            .min_by_key(|a| rank(&a.name))
     }
 
     /// Prefer Windows installer assets for the Application channel.

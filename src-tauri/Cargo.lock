@@ -5353,7 +5353,7 @@ dependencies = [
 
 [[package]]
 name = "zapp"
-version = "0.2.6"
+version = "0.2.5"
 dependencies = [
  "chrono",
  "log",

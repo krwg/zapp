@@ -710,52 +710,8 @@ pub fn strategy_prior_bonus(name: &str) -> i32 {
 }
 
 pub fn rank_score(probe_score: u32, strategy_name: &str) -> u32 {
-    rank_score_with_latency(probe_score, strategy_name, None)
-}
-
-/// Latency tier (best critical ms): faster strategies rise on ties / near-ties.
-pub fn rank_score_with_latency(
-    probe_score: u32,
-    strategy_name: &str,
-    best_latency_ms: Option<u32>,
-) -> u32 {
-    let mut adjusted = probe_score as i32 + strategy_prior_bonus(strategy_name);
-    if let Some(ms) = best_latency_ms {
-        adjusted += match ms {
-            0..=80 => 4,
-            81..=150 => 2,
-            151..=300 => 0,
-            301..=600 => -2,
-            _ => -4,
-        };
-    }
+    let adjusted = probe_score as i32 + strategy_prior_bonus(strategy_name);
     adjusted.clamp(0, 100) as u32
-}
-
-/// Soft CDN / non-critical average contribution (0–100).
-pub fn soft_contribution(host_results: &[(DiagTarget, Vec<ProbeResult>)]) -> u32 {
-    let soft: Vec<u32> = host_results
-        .iter()
-        .filter(|(t, _)| !t.critical)
-        .map(|(_, probes)| score_probes(probes))
-        .collect();
-    if soft.is_empty() {
-        0
-    } else {
-        soft.iter().sum::<u32>() / soft.len() as u32
-    }
-}
-
-pub fn latency_stats(probes: &[ProbeResult]) -> (Option<u32>, Option<u32>, Option<u32>) {
-    let mut vals: Vec<u32> = probes.iter().filter_map(|p| p.latency_ms).collect();
-    if vals.is_empty() {
-        return (None, None, None);
-    }
-    vals.sort_unstable();
-    let min = vals.first().copied();
-    let max = vals.last().copied();
-    let mid = vals[vals.len() / 2];
-    (min, Some(mid), max)
 }
 
 #[allow(dead_code)]

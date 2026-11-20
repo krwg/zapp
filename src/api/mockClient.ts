@@ -11,7 +11,6 @@ import type {
   EngineStatus,
   MonitoredService,
   Profile,
-  TelegramProxyState,
   UpdateChannel,
 } from '@/types'
 import type { ZappApi } from './types'
@@ -84,34 +83,6 @@ export const mockApi: ZappApi = {
     return next
   },
 
-  async setTelegramProxyRunning(running) {
-    await delay(400)
-    state.telegram.status = running ? 'starting' : 'stopping'
-    await delay(500)
-    state.telegram.status = running ? 'running' : 'stopped'
-    if (running) {
-      state.telegram.sessionStartedAt = new Date().toISOString()
-      state.telegram.uptimeSeconds = 0
-      state.telegram.lastError = null
-    } else {
-      state.telegram.sessionStartedAt = null
-      state.telegram.uptimeSeconds = 0
-    }
-    return clone(state.telegram) as TelegramProxyState
-  },
-
-  async getTelegramProxyLink() {
-    return state.telegram.proxyLink
-  },
-
-  async openExternalUrl(_url) {
-    await delay(50)
-  },
-
-  async getRecentErrors() {
-    return []
-  },
-
   async setActiveProfile(profileId) {
     await delay(350)
     state.profiles = state.profiles.map((p) => ({
@@ -148,23 +119,9 @@ export const mockApi: ZappApi = {
     }
 
     let index = 0
-    const demoExtra = (
-      partial: Pick<
-        DiagnosticStrategyResult,
-        'id' | 'name' | 'strategyType' | 'success' | 'latencyMs' | 'score' | 'notes' | 'testedAt'
-      >,
-    ): DiagnosticStrategyResult => ({
-      latencyMedianMs: partial.latencyMs,
-      latencyMaxMs: partial.latencyMs,
-      softScore: 0,
-      services: [],
-      hosts: [],
-      ...partial,
-    })
-
     const queue: DiagnosticStrategyResult[] = [
       ...demoResults,
-      demoExtra({
+      {
         id: `extra-${Date.now()}-1`,
         name: 'General ALT3',
         strategyType: 'nfqws',
@@ -173,8 +130,8 @@ export const mockApi: ZappApi = {
         score: 18,
         notes: 'Demo fail',
         testedAt: new Date().toISOString(),
-      }),
-      demoExtra({
+      },
+      {
         id: `extra-${Date.now()}-2`,
         name: 'General ALT4',
         strategyType: 'disorder',
@@ -183,8 +140,8 @@ export const mockApi: ZappApi = {
         score: 70,
         notes: 'Demo pass',
         testedAt: new Date().toISOString(),
-      }),
-      demoExtra({
+      },
+      {
         id: `extra-${Date.now()}-3`,
         name: 'General ALT5',
         strategyType: 'split',
@@ -193,8 +150,8 @@ export const mockApi: ZappApi = {
         score: 10,
         notes: 'Demo fail',
         testedAt: new Date().toISOString(),
-      }),
-      demoExtra({
+      },
+      {
         id: `extra-${Date.now()}-4`,
         name: 'FAKE TLS AUTO ALT2',
         strategyType: 'fake + multisplit',
@@ -203,7 +160,7 @@ export const mockApi: ZappApi = {
         score: 91,
         notes: 'Demo pass',
         testedAt: new Date().toISOString(),
-      }),
+      },
     ]
 
     state.diagnostics.phase = 'testing'

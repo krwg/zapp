@@ -10,7 +10,6 @@ import type {
   EngineStatus,
   MonitoredService,
   Profile,
-  TelegramProxyState,
   ThemeMode,
   UpdateChannel,
 } from '@/types'
@@ -24,11 +23,6 @@ export function createTauriApi(): ZappApi {
     setEngineRunning: (running) =>
       invoke<EngineStatus>('set_engine_running', { running }),
     resetEngine: () => invoke<EngineStatus>('reset_engine'),
-    setTelegramProxyRunning: (running) =>
-      invoke<TelegramProxyState>('set_telegram_proxy_running', { running }),
-    getTelegramProxyLink: () => invoke<string>('get_telegram_proxy_link'),
-    openExternalUrl: (url) => invoke<void>('open_external_url', { url }),
-    getRecentErrors: () => invoke<string[]>('get_recent_errors'),
     setActiveProfile: (profileId) =>
       invoke<Profile>('set_active_profile', { profileId }),
     startDiagnostics: () => invoke<DiagnosticRun>('start_diagnostics'),

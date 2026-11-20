@@ -12,7 +12,6 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { getApi } from '@/api/client'
 import type {
   AppSettings,
@@ -33,9 +32,6 @@ interface AppStateContextValue {
   refresh: () => Promise<void>
   toggleEngine: () => Promise<void>
   resetEngine: () => Promise<void>
-  toggleTelegramProxy: () => Promise<void>
-  openTelegramProxyLink: () => Promise<void>
-  copyTelegramProxyLink: () => Promise<void>
   setActiveProfile: (id: string) => Promise<void>
   startDiagnostics: () => Promise<void>
   cancelDiagnostics: () => Promise<void>
@@ -47,7 +43,6 @@ interface AppStateContextValue {
   updateChannel: (id: UpdateChannel['id']) => Promise<void>
   updatesLive: UpdateChannel[]
   updateSettings: (patch: Partial<AppSettings>, opts?: { quiet?: boolean }) => Promise<void>
-  getRecentErrors: () => Promise<string[]>
   busy: Record<string, boolean>
 }
 
@@ -67,15 +62,6 @@ function mergeSnapshot(prev: AppSnapshot | null, next: AppSnapshot): AppSnapshot
     connection = { ...next.connection, status: prev.connection.status }
   }
 
-  let telegram = next.telegram
-  if (
-    prev.telegram &&
-    TRANSITIONAL.includes(prev.telegram.status) &&
-    (next.telegram.status === 'stopped' || next.telegram.status === 'running')
-  ) {
-    telegram = { ...next.telegram, status: prev.telegram.status }
-  }
-
   const services = next.services.map((s) => {
     const old = prev.services.find((p) => p.id === s.id)
     if (old?.status === 'checking' && s.status !== 'checking') {
@@ -84,7 +70,7 @@ function mergeSnapshot(prev: AppSnapshot | null, next: AppSnapshot): AppSnapshot
     return s
   })
 
-  return { ...next, connection, telegram, services }
+  return { ...next, connection, services }
 }
 
 export function AppStateProvider({ children }: { children: ReactNode }) {
@@ -92,14 +78,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const { push } = useToast()
   const { setMode } = useTheme()
   const { t } = useLocale()
-  const navigate = useNavigate()
   const [loading, setLoading] = useState(true)
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null)
   const [diagnosticsLive, setDiagnosticsLive] = useState<DiagnosticRun | null>(null)
   const [updatesLive, setUpdatesLive] = useState<UpdateChannel[]>([])
   const [busy, setBusy] = useState<Record<string, boolean>>({})
   const engineActionRef = useRef(0)
-  const tgActionRef = useRef(0)
   const checkingIdsRef = useRef<Set<string>>(new Set())
 
   const refresh = useCallback(async () => {
@@ -121,8 +105,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           title: t('toast.errorTitle'),
           description: message,
           tone: 'error',
-          actionLabel: t('aboutPage.reportBug'),
-          onAction: () => navigate('/about'),
         })
         try {
           await refresh()
@@ -133,7 +115,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         setBusy((prev) => ({ ...prev, [key]: false }))
       }
     },
-    [navigate, push, refresh, t],
+    [push, refresh, t],
   )
 
   useEffect(() => {
@@ -190,14 +172,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
               !TRANSITIONAL.includes(snap.connection.status)
             ) {
               merged = { ...merged, connection: snap.connection }
-            }
-            if (
-              prev &&
-              TRANSITIONAL.includes(prev.telegram.status) &&
-              tgActionRef.current === 0 &&
-              !TRANSITIONAL.includes(snap.telegram.status)
-            ) {
-              merged = { ...merged, telegram: snap.telegram }
             }
             // Drop checking once individual checks cleared.
             if (checkingIdsRef.current.size === 0) {
@@ -265,76 +239,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       })
     })
   }, [api, push, refresh, t, withBusy])
-
-  const toggleTelegramProxy = useCallback(async () => {
-    if (!snapshot) return
-    const running = snapshot.telegram.status === 'running'
-    await withBusy('telegram', async () => {
-      tgActionRef.current += 1
-      try {
-        setSnapshot((prev) =>
-          prev
-            ? {
-                ...prev,
-                telegram: {
-                  ...prev.telegram,
-                  status: running ? 'stopping' : 'starting',
-                },
-              }
-            : prev,
-        )
-        const tg = await api.setTelegramProxyRunning(!running)
-        const data = await api.getSnapshot()
-        setSnapshot({ ...data, telegram: tg })
-        setDiagnosticsLive(data.diagnostics)
-        setUpdatesLive(data.updates)
-        if (tg.status === 'running') {
-          push({
-            title: t('telegram.onTitle'),
-            description: t('telegram.onDesc'),
-            tone: 'success',
-          })
-        } else {
-          push({
-            title: t('telegram.offTitle'),
-            description: t('telegram.offDesc'),
-            tone: 'success',
-          })
-        }
-      } finally {
-        tgActionRef.current = Math.max(0, tgActionRef.current - 1)
-      }
-    })
-  }, [api, push, snapshot, t, withBusy])
-
-  const openTelegramProxyLink = useCallback(async () => {
-    const link =
-      snapshot?.telegram.proxyLink ?? (await api.getTelegramProxyLink())
-    await api.openExternalUrl(link)
-  }, [api, snapshot])
-
-  const copyTelegramProxyLink = useCallback(async () => {
-    const link =
-      snapshot?.telegram.proxyLink ?? (await api.getTelegramProxyLink())
-    try {
-      await navigator.clipboard.writeText(link)
-      push({
-        title: t('telegram.linkCopiedTitle'),
-        description: t('telegram.linkCopiedDesc'),
-        tone: 'success',
-      })
-    } catch {
-      push({
-        title: t('telegram.linkCopiedTitle'),
-        description: link,
-        tone: 'neutral',
-      })
-    }
-  }, [api, push, snapshot, t])
-
-  const getRecentErrors = useCallback(async () => {
-    return api.getRecentErrors()
-  }, [api])
 
   const setActiveProfile = useCallback(
     async (id: string) => {
@@ -529,9 +433,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       refresh,
       toggleEngine,
       resetEngine,
-      toggleTelegramProxy,
-      openTelegramProxyLink,
-      copyTelegramProxyLink,
       setActiveProfile,
       startDiagnostics,
       cancelDiagnostics,
@@ -543,7 +444,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       updateChannel,
       updatesLive,
       updateSettings,
-      getRecentErrors,
       busy,
     }),
     [
@@ -552,9 +452,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       refresh,
       toggleEngine,
       resetEngine,
-      toggleTelegramProxy,
-      openTelegramProxyLink,
-      copyTelegramProxyLink,
       setActiveProfile,
       startDiagnostics,
       cancelDiagnostics,
@@ -566,7 +463,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       updateChannel,
       updatesLive,
       updateSettings,
-      getRecentErrors,
       busy,
     ],
   )
