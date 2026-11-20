@@ -22,7 +22,7 @@
 | `stopFailed` | taskkill не смог | stop status | ручной kill |
 | `diagnosticsNeedsAdmin` | diag без elevate path | flag | Start один раз |
 
-## Дополнительные сценарии (детект в roadmap)
+## Дополнительные сценарии (плановый детект)
 
 1. **WinDivert orphan RUNNING без winws** — `sc query` RUNNING + tasklist empty → auto `net stop`.
 2. **Несколько winws PID** — orphan от старых bat → kill tree перед start.

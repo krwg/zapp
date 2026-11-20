@@ -1,6 +1,6 @@
 ## zapp 0.2.6
 
-Stable 0.2.5 engine lifecycle plus GUI polish and slice-A trust hardening: helper `winws` path allowlist, SHA256 for Application installs, visible update-check errors, and removal of dead Settings toggles. No Telegram MTProto proxy. No ProgramData migration yet (roadmap 1b).
+Keeps the stable 0.2.5 engine lifecycle and adds clearer Updates / About UX, richer Smart check results, and stricter checks before applying Application updates. No Telegram proxy in this build.
 
 ### Upgrading from 0.2.5
 
@@ -10,28 +10,26 @@ Stable 0.2.5 engine lifecycle plus GUI polish and slice-A trust hardening: helpe
 
 ### Fixed
 
-- **Release notes Markdown** — ATX headings, lists, fenced code, blockquotes/callouts (no more raw `###` in Updates).
-- **Silent update checks** — GitHub fetch failures set channel status to Error with a real message (rate-limit / offline), instead of looking “up to date”.
-- **Application asset preference** — NSIS `setup.exe` preferred over MSI (matches README).
+- **Release notes Markdown** — headings, lists, fenced code, and callouts render correctly in Updates (no more raw `###`).
+- **Update check failures** — network / GitHub errors show as Error on the channel instead of looking “up to date”.
+- **Preferred installer** — Application updates prefer the NSIS setup over MSI.
 
 ### Added
 
-- **Helper path allowlist** — elevated helper only starts `…\app.zapp.desktop\engine\<ver>\bin\winws.exe` with matching work_dir (blocks arbitrary elevated exe via Start IPC).
-- **SHA256 for Application updates** — verify GitHub asset `digest` or SHA256 from release notes before launching the installer; refuse if missing/mismatch.
-- **Engine zip sanity** — reject non-zip / tiny downloads before extract.
-- **Richer Smart check scoring** — per-service scores, host details, soft score, median/max latency; expandable rows.
-- **Report a bug** on About — prefilled GitHub Issue; error toasts link to About; issue template.
+- **Richer Smart check results** — per-service scores, host details, soft score, median/max latency; expandable rows.
+- **Report a bug** on About — prefilled GitHub Issue; error toasts can open About; issue template added.
+- **Safer Application installs** — downloaded installers are checked against published SHA256 (GitHub digest or release notes) before launch.
+- **Engine download checks** — reject obviously invalid zip downloads before extract.
+- **Helper launch checks** — elevated helper only starts the managed engine binary from the installed pack layout.
 
 ### Changed
 
-- Settings UI no longer shows non-functional toggles (`autoDiagnostics`, interval, retries, verbose logging, engine/strategies paths). Values remain in stored settings for compatibility.
-- Ships on the hardened 0.2.5 Bypass / helper / Quit / Cancel lifecycle.
+- Settings no longer show unused advanced toggles that did nothing in the UI.
+- Continues on the hardened 0.2.5 Bypass / helper / Quit / Cancel lifecycle.
 
 ### Known limitations
 
 - Probes are still **TCP/HTTPS**, not a real Discord client. **Voice (UDP)** can fail while Sites cards look green.
-- Helper path allowlist is not a full UAC boundary: engine pack remains under user-writable `%APPDATA%` until ProgramData migration (roadmap 1b). Token is still TCP+file based (1c later).
-- Flowseal engine packs are not SHA256-pinned yet (zip magic only); signed manifest later.
 - Engine pack downloads from GitHub on first run; not bundled in the installer.
 - **MSI** has no cleanup page — prefer NSIS.
 - Not a VPN; no telemetry.

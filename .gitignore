@@ -67,6 +67,10 @@ Desktop.ini
 *.local
 .turbo/
 .cache/
+*.canvas.tsx
+**/canvases/
+*roadmap*
+*ROADMAP*
 
 # local release copies (GitHub Releases is the source of truth)
 dist-release/
