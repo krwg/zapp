@@ -84,15 +84,112 @@
   gap: var(--space-3);
 }
 
+.rankToggle {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
 .rankName {
   font-size: var(--text-md);
   font-weight: var(--weight-medium);
 }
 
+.rankSummary {
+  margin-top: 4px;
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+}
+
+.rankSummary strong {
+  color: var(--text-secondary);
+  font-weight: var(--weight-medium);
+}
+
+.dot {
+  margin: 0 6px;
+  opacity: 0.55;
+}
+
+.rankTopRight {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chevron {
+  color: var(--text-tertiary);
+  transition: transform 0.15s ease;
+}
+
+.chevronOpen {
+  transform: rotate(180deg);
+}
+
 .rankType {
-  margin-top: 2px;
   font-size: var(--text-xs);
   color: var(--text-tertiary);
+}
+
+.rankDetails {
+  display: grid;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.detailGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.detailLabel {
+  display: block;
+  margin-bottom: 2px;
+}
+
+.detailGrid strong {
+  color: var(--text-secondary);
+  font-weight: var(--weight-medium);
+}
+
+.serviceList,
+.hostList {
+  display: grid;
+  gap: 4px;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.serviceRow,
+.hostRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.hostOk {
+  color: var(--text-secondary);
+}
+
+.hostFail {
+  color: var(--status-error, #c44);
+}
+
+.notesFull {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  white-space: normal;
 }
 
 .scoreTrack {

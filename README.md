@@ -22,7 +22,7 @@ I made zapp because I was tired of launching BAT files with a console window you
 
 zapp wraps zapret and the [Flowseal strategy pack](https://github.com/Flowseal/zapret-discord-youtube) in a small Tauri app. Press Start on the **Bypass** card, approve UAC once, and `winws` runs hidden in the background.
 
-**Smart check** (Fast by default, Thorough optional) tries strategies against YouTube and Discord — gateway plus `discord.media` ports — and turns on one that passes both. From **0.2.4** the loop is much faster; **0.2.5** hardens the engine lifecycle (stop-before-restart, Quit stops `winws`/helper, Cancel clears queued restarts), keeps Bypass status owned-only, and speeds DNS/probes further. Home keeps site cards grey until a fresh probe; stale “Available” from days ago no longer looks like live access.
+**Smart check** (Fast by default, Thorough optional) tries strategies against YouTube and Discord — gateway plus `discord.media` ports — and turns on one that passes both. From **0.2.4** the loop is much faster; **0.2.5** hardens the engine lifecycle (stop-before-restart, Quit stops `winws`/helper, Cancel clears queued restarts), keeps Bypass status owned-only, and speeds DNS/probes further. **0.2.6** keeps that lifecycle and adds Markdown release notes, in-app bug reports, and richer Smart check result details. Home keeps site cards grey until a fresh probe; stale “Available” from days ago no longer looks like live access.
 
 The app, engine and strategies update separately. English and Russian UI, light/dark themes, tray support.
 
@@ -50,7 +50,8 @@ Antivirus and SmartScreen sometimes flag WinDivert-based tools, because a packet
 
 Short version before you install:
 
-- As of **0.2.3+**, Smart check requires both YouTube and Discord (gateway + `discord.media` on Flowseal ports). It still only does **TCP/HTTPS probes**, not a real client — **Discord voice (UDP)** can fail while the Sites cards stay green.
+- As of **0.2.6**, Smart check still requires both YouTube and Discord (gateway + `discord.media` on Flowseal ports) and shows richer per-host scores. It still only does **TCP/HTTPS probes**, not a real client — **Discord voice (UDP)** can fail while the Sites cards stay green.
+- Helper only launches managed `winws.exe` under `%APPDATA%\app.zapp.desktop\engine\…`, but that pack folder is still user-writable — full UAC hardening needs ProgramData (roadmap).
 - From **0.2.4+** the check is much faster and steadier; if something still feels off afterwards, open **Modes** and pick a strategy by hand.
 - First launch needs GitHub access to download the engine pack. There is no offline pack picker in the UI yet.
 - Closing the window hides to the tray by default; the process is still running. **Quit from the tray** before reinstalling (0.2.5 also stops `winws`/helper on Quit), or the setup cannot replace `zapp.exe`.

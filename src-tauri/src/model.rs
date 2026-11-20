@@ -137,13 +137,39 @@ pub struct SystemInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DiagnosticHostDetail {
+    pub host: String,
+    pub service: String,
+    pub ok: bool,
+    pub latency_ms: Option<u32>,
+    pub note: String,
+    pub critical: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticServiceScore {
+    pub service: String,
+    pub score: u32,
+    pub ok: bool,
+    pub latency_ms: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DiagnosticStrategyResult {
     pub id: String,
     pub name: String,
     pub strategy_type: String,
     pub success: bool,
+    /// Best (min) critical latency — shown as Response in the collapsed UI.
     pub latency_ms: Option<u32>,
+    pub latency_median_ms: Option<u32>,
+    pub latency_max_ms: Option<u32>,
     pub score: u32,
+    pub soft_score: u32,
+    pub services: Vec<DiagnosticServiceScore>,
+    pub hosts: Vec<DiagnosticHostDetail>,
     pub notes: String,
     pub tested_at: String,
 }

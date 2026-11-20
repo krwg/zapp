@@ -37,6 +37,8 @@ export function createTauriApi(): ZappApi {
       invoke<UpdateChannel>('update_channel', { channelId }),
     updateSettings: (patch) => invoke<AppSettings>('update_settings', { patch }),
     setTheme: (mode) => invoke<ThemeMode>('set_theme', { mode }),
+    openExternalUrl: (url) => invoke<void>('open_external_url', { url }),
+    getRecentErrors: () => invoke<string[]>('get_recent_errors'),
   }
 }
 

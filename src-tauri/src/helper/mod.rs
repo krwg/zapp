@@ -3,6 +3,7 @@
 // ╚════════════════════════════════════════════════════╝
 
 mod client;
+mod paths;
 mod protocol;
 mod server;
 

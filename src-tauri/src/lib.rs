@@ -167,6 +167,8 @@ pub fn run() {
             commands::set_theme,
             commands::run_preflight,
             commands::reset_engine,
+            commands::open_external_url,
+            commands::get_recent_errors,
         ])
         .build(tauri::generate_context!())
         .expect("error while building zapp")

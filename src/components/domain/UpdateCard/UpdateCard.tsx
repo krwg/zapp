@@ -68,11 +68,13 @@ function displayVer(id: UpdateChannel['id'], version: string): string {
 
 export function UpdateCard({ channel, busy, onUpdate }: UpdateCardProps) {
   const { t, locale } = useLocale()
-  const [openNotes, setOpenNotes] = useState(false)
+  const isError = channel.status === 'error'
+  const [openNotes, setOpenNotes] = useState(isError)
   const meta = statusMeta(channel.status, t)
   const copy = channelCopy(channel.id, t)
   const inProgress = channel.status === 'downloading' || channel.status === 'installing'
   const hasNotes = Boolean(channel.releaseNotes?.trim())
+  const notesOpen = isError || openNotes
 
   return (
     <section className={styles.card}>
@@ -101,15 +103,15 @@ export function UpdateCard({ channel, busy, onUpdate }: UpdateCardProps) {
             type="button"
             className={styles.notesToggle}
             onClick={() => setOpenNotes((v) => !v)}
-            aria-expanded={openNotes}
+            aria-expanded={notesOpen}
           >
-            <span>{t('updates.releaseNotes')}</span>
+            <span>{isError ? t('status.error') : t('updates.releaseNotes')}</span>
             <ChevronDown
               size={16}
-              className={[styles.chevron, openNotes ? styles.chevronOpen : ''].join(' ')}
+              className={[styles.chevron, notesOpen ? styles.chevronOpen : ''].join(' ')}
             />
           </button>
-          {openNotes ? (
+          {notesOpen ? (
             <div className={styles.notesBody}>
               <Markdown source={channel.releaseNotes} />
             </div>
@@ -139,7 +141,7 @@ export function UpdateCard({ channel, busy, onUpdate }: UpdateCardProps) {
           size="sm"
           variant={channel.status === 'available' ? 'primary' : 'secondary'}
           onClick={onUpdate}
-          disabled={busy || channel.status === 'up_to_date' || inProgress}
+          disabled={busy || channel.status === 'up_to_date' || inProgress || isError}
         >
           <Download size={14} />
           {t('updates.update')}

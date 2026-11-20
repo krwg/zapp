@@ -14,6 +14,7 @@ import {
 export interface UiPrefs {
   confirmDisableProtection: boolean
   showSidebarSession: boolean
+  bugReportHintSeen: boolean
 }
 
 interface UiPrefsContextValue extends UiPrefs {
@@ -24,6 +25,7 @@ const STORAGE_KEY = 'zapp.uiPrefs'
 const DEFAULTS: UiPrefs = {
   confirmDisableProtection: false,
   showSidebarSession: true,
+  bugReportHintSeen: false,
 }
 
 const UiPrefsContext = createContext<UiPrefsContextValue | null>(null)

@@ -181,7 +181,7 @@ export const MOCK_SNAPSHOT: AppSnapshot = {
     },
   ],
   system: {
-    appVersion: '0.2.0',
+    appVersion: '0.2.6',
     engineVersion: '1.10.4',
     strategiesVersion: '2026.11.11',
     lastUpdateCheckAt: '2026-11-12T08:00:00.000Z',
@@ -206,12 +206,12 @@ export const MOCK_SNAPSHOT: AppSnapshot = {
       id: 'application',
       title: 'Application',
       description: 'Клиент zapp. Независим от версии движка zapret.',
-      currentVersion: '0.2.0',
-      latestVersion: '0.2.0',
+      currentVersion: '0.2.6',
+      latestVersion: '0.2.6',
       status: 'up_to_date',
       lastCheckedAt: '2026-11-12T08:00:00.000Z',
       downloadProgress: null,
-      releaseNotes: 'zapp 0.2 — hidden engine, real diagnostics.',
+      releaseNotes: 'zapp 0.2.6 — Markdown notes, bug report, richer Smart check.',
       independent: true,
     },
     {
@@ -257,7 +257,7 @@ export const MOCK_SNAPSHOT: AppSnapshot = {
   },
   about: {
     name: 'zapp',
-    version: '0.2.0',
+    version: '0.2.6',
     license: 'MIT',
     authors: ['krwg'],
     githubUrl: 'https://github.com/krwg/zapp',

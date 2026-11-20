@@ -199,3 +199,42 @@ pub fn reset_engine(state: State<'_, AppState>) -> AppResult<EngineStatus> {
     state.history.push("engine", "Hard reset winws / WinDivert");
     Ok(status)
 }
+
+#[tauri::command]
+pub fn open_external_url(url: String) -> AppResult<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", &url])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| crate::error::AppError::from(e.to_string()))?;
+        return Ok(());
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = url;
+        Err(crate::error::AppError::from("open_external_url is Windows-only"))
+    }
+}
+
+#[tauri::command]
+pub fn get_recent_errors(state: State<'_, AppState>) -> Vec<String> {
+    state
+        .history
+        .list(32)
+        .into_iter()
+        .filter(|e| {
+            let kind = e.kind.to_ascii_lowercase();
+            let msg = e.message.to_ascii_lowercase();
+            kind.contains("error")
+                || kind.contains("fail")
+                || msg.contains("fail")
+                || msg.contains("error")
+        })
+        .take(8)
+        .map(|e| format!("[{}] {}", e.kind, e.message))
+        .collect()
+}

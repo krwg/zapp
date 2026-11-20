@@ -31,4 +31,6 @@ export interface ZappApi {
   updateChannel(channelId: UpdateChannel['id']): Promise<UpdateChannel>
   updateSettings(patch: Partial<AppSettings>): Promise<AppSettings>
   setTheme(mode: ThemeMode): Promise<ThemeMode>
+  openExternalUrl(url: string): Promise<void>
+  getRecentErrors(): Promise<string[]>
 }

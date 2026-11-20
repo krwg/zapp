@@ -29,21 +29,13 @@ export function SettingsPage() {
   const { push } = useToast()
   const { confirmDisableProtection, showSidebarSession, setPref } = useUiPrefs()
 
-  const [intervalHours, setIntervalHours] = useState(24)
   const [timeoutMs, setTimeoutMs] = useState(8000)
-  const [retries, setRetries] = useState(0)
-  const [enginePath, setEnginePath] = useState('')
-  const [strategiesPath, setStrategiesPath] = useState('')
   const debounceRef = useRef<number | null>(null)
   const pendingPatchRef = useRef<Parameters<typeof updateSettings>[0]>({})
 
   useEffect(() => {
     if (!snapshot) return
-    setIntervalHours(snapshot.settings.diagnosticsIntervalHours)
     setTimeoutMs(snapshot.settings.networkTimeoutMs)
-    setRetries(snapshot.settings.networkRetries)
-    setEnginePath(snapshot.settings.enginePath ?? '')
-    setStrategiesPath(snapshot.settings.strategiesPath ?? '')
   }, [snapshot])
 
   useEffect(() => {
@@ -213,36 +205,6 @@ export function SettingsPage() {
         </SettingsGroup>
 
         <SettingsGroup>
-          <SettingsRow
-            title={t('settings.autoDiagnostics')}
-            hint={t('settings.diagnosticsDesc')}
-          >
-            <Toggle
-              checked={settings.autoDiagnostics}
-              disabled={disabled}
-              onChange={(checked) => void updateSettings({ autoDiagnostics: checked })}
-            />
-          </SettingsRow>
-          <SettingsRow
-            title={t('settings.intervalHours')}
-            hint={t('settings.intervalHint')}
-          >
-            <input
-              className={settingsStyles.input}
-              type="number"
-              min={1}
-              max={168}
-              value={intervalHours}
-              onChange={(e) => {
-                const v = Number(e.target.value) || 24
-                setIntervalHours(v)
-                debouncePatch({ diagnosticsIntervalHours: v })
-              }}
-            />
-          </SettingsRow>
-        </SettingsGroup>
-
-        <SettingsGroup>
           <SettingsRow title={t('settings.timeoutMs')} hint={t('settings.networkDesc')}>
             <input
               className={settingsStyles.input}
@@ -255,56 +217,6 @@ export function SettingsPage() {
                 const v = Number(e.target.value) || 8000
                 setTimeoutMs(v)
                 debouncePatch({ networkTimeoutMs: v })
-              }}
-            />
-          </SettingsRow>
-          <SettingsRow title={t('settings.retries')}>
-            <input
-              className={settingsStyles.input}
-              type="number"
-              min={0}
-              max={10}
-              value={retries}
-              onChange={(e) => {
-                const v = Number(e.target.value) || 0
-                setRetries(v)
-                debouncePatch({ networkRetries: v })
-              }}
-            />
-          </SettingsRow>
-        </SettingsGroup>
-
-        <SettingsGroup>
-          <SettingsRow title={t('settings.verboseLogging')} hint={t('settings.verboseHint')}>
-            <Toggle
-              checked={settings.advancedLogging}
-              disabled={disabled}
-              onChange={(checked) => void updateSettings({ advancedLogging: checked })}
-            />
-          </SettingsRow>
-          <SettingsRow title={t('settings.enginePath')} hint={t('settings.enginePathHint')}>
-            <input
-              className={settingsStyles.select}
-              style={{ minWidth: 220 }}
-              placeholder={t('settings.managedPlaceholder')}
-              value={enginePath}
-              onChange={(e) => {
-                const v = e.target.value
-                setEnginePath(v)
-                debouncePatch({ enginePath: v || null })
-              }}
-            />
-          </SettingsRow>
-          <SettingsRow title={t('settings.strategiesPath')}>
-            <input
-              className={settingsStyles.select}
-              style={{ minWidth: 220 }}
-              placeholder={t('settings.managedPlaceholder')}
-              value={strategiesPath}
-              onChange={(e) => {
-                const v = e.target.value
-                setStrategiesPath(v)
-                debouncePatch({ strategiesPath: v || null })
               }}
             />
           </SettingsRow>

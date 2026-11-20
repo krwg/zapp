@@ -80,13 +80,34 @@ export interface SystemInfo {
   elevated: boolean
 }
 
+export interface DiagnosticHostDetail {
+  host: string
+  service: string
+  ok: boolean
+  latencyMs: number | null
+  note: string
+  critical: boolean
+}
+
+export interface DiagnosticServiceScore {
+  service: string
+  score: number
+  ok: boolean
+  latencyMs: number | null
+}
+
 export interface DiagnosticStrategyResult {
   id: string
   name: string
   strategyType: string
   success: boolean
   latencyMs: number | null
+  latencyMedianMs: number | null
+  latencyMaxMs: number | null
   score: number
+  softScore: number
+  services: DiagnosticServiceScore[]
+  hosts: DiagnosticHostDetail[]
   notes: string
   testedAt: string
 }

@@ -49,16 +49,16 @@ impl UpdateManager {
     }
 
     pub fn check_all(&self) -> AppResult<Vec<UpdateChannel>> {
-        let flowseal = fetch_flowseal_latest().ok();
-        let zapp = fetch_zapp_latest().ok();
+        let flowseal = fetch_flowseal_latest();
+        let zapp = fetch_zapp_latest();
         let mut channels = self.channels.lock().expect("updates lock");
         let now = now_iso();
 
         for channel in channels.iter_mut() {
             channel.last_checked_at = Some(now.clone());
             match channel.id {
-                UpdateChannelId::Engine | UpdateChannelId::Strategies => {
-                    if let Some(ref rel) = flowseal {
+                UpdateChannelId::Engine | UpdateChannelId::Strategies => match &flowseal {
+                    Ok(rel) => {
                         let latest = rel.version().to_string();
                         channel.latest_version = latest.clone();
                         channel.release_notes = rel.body.clone().unwrap_or_else(|| {
@@ -74,9 +74,16 @@ impl UpdateManager {
                             UpdateChannelStatus::UpToDate
                         };
                     }
-                }
-                UpdateChannelId::Application => {
-                    if let Some(ref rel) = zapp {
+                    Err(e) => {
+                        channel.status = UpdateChannelStatus::Error;
+                        channel.release_notes = format!(
+                            "Update check failed for {FLOWSEAL_REPO}: {e}\n\n\
+                             Often rate-limited (GitHub 60 req/h/IP) or offline. Try again later."
+                        );
+                    }
+                },
+                UpdateChannelId::Application => match &zapp {
+                    Ok(rel) => {
                         let latest = rel.version().to_string();
                         channel.latest_version = latest.clone();
                         channel.release_notes = rel
@@ -90,7 +97,14 @@ impl UpdateManager {
                                 UpdateChannelStatus::UpToDate
                             };
                     }
-                }
+                    Err(e) => {
+                        channel.status = UpdateChannelStatus::Error;
+                        channel.release_notes = format!(
+                            "Update check failed for {ZAPP_REPO}: {e}\n\n\
+                             Often rate-limited (GitHub 60 req/h/IP) or offline. Try again later."
+                        );
+                    }
+                },
             }
         }
 
@@ -228,6 +242,11 @@ impl UpdateManager {
             }
         })?;
 
+        if let Err(e) = crate::engine::integrity::verify_zip_sanity(&archive_path) {
+            self.mark_error(id, e.to_string());
+            return Err(e);
+        }
+
         {
             let mut channels = self.channels.lock().expect("updates lock");
             if let Some(channel) = channels.iter_mut().find(|c| c.id == id) {
@@ -324,6 +343,21 @@ impl UpdateManager {
                 channel.status = UpdateChannelStatus::Downloading;
             }
         })?;
+
+        let expected = match crate::engine::integrity::expected_app_sha256(
+            &asset,
+            release.body.as_deref(),
+        ) {
+            Ok(h) => h,
+            Err(e) => {
+                self.mark_error(UpdateChannelId::Application, e.to_string());
+                return Err(e);
+            }
+        };
+        if let Err(e) = crate::engine::integrity::verify_file_sha256(&dest, &expected) {
+            self.mark_error(UpdateChannelId::Application, e.to_string());
+            return Err(e);
+        }
 
         {
             let mut channels = self.channels.lock().expect("updates lock");

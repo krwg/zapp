@@ -23,6 +23,9 @@ pub struct GithubAsset {
     pub name: String,
     pub browser_download_url: String,
     pub size: u64,
+    /// GitHub Releases asset digest, e.g. `sha256:abcdef…` (optional until publisher sets it).
+    #[serde(default)]
+    pub digest: Option<String>,
 }
 
 pub fn fetch_latest_release(repo: &str) -> AppResult<GithubRelease> {
@@ -68,12 +71,13 @@ impl GithubRelease {
     }
 
     /// Prefer Windows installer assets for the Application channel.
+    /// NSIS setup.exe ranks above MSI (README recommends NSIS; avoids dual uninstall entries).
     pub fn preferred_app_asset(&self) -> Option<&GithubAsset> {
         let rank = |name: &str| -> u8 {
             let n = name.to_ascii_lowercase();
-            if n.ends_with(".msi") {
+            if n.contains("setup") && n.ends_with(".exe") {
                 0
-            } else if n.contains("setup") && n.ends_with(".exe") {
+            } else if n.ends_with(".msi") {
                 1
             } else if n.ends_with(".exe") {
                 2

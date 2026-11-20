@@ -12,6 +12,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { getApi } from '@/api/client'
 import type {
   AppSettings,
@@ -43,6 +44,7 @@ interface AppStateContextValue {
   updateChannel: (id: UpdateChannel['id']) => Promise<void>
   updatesLive: UpdateChannel[]
   updateSettings: (patch: Partial<AppSettings>, opts?: { quiet?: boolean }) => Promise<void>
+  getRecentErrors: () => Promise<string[]>
   busy: Record<string, boolean>
 }
 
@@ -78,6 +80,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const { push } = useToast()
   const { setMode } = useTheme()
   const { t } = useLocale()
+  const navigate = useNavigate()
   const [loading, setLoading] = useState(true)
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null)
   const [diagnosticsLive, setDiagnosticsLive] = useState<DiagnosticRun | null>(null)
@@ -105,6 +108,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           title: t('toast.errorTitle'),
           description: message,
           tone: 'error',
+          actionLabel: t('aboutPage.reportBug'),
+          onAction: () => navigate('/about'),
         })
         try {
           await refresh()
@@ -115,7 +120,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         setBusy((prev) => ({ ...prev, [key]: false }))
       }
     },
-    [push, refresh, t],
+    [navigate, push, refresh, t],
   )
 
   useEffect(() => {
@@ -426,6 +431,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [api, push, setMode, t, withBusy],
   )
 
+  const getRecentErrors = useCallback(async () => {
+    return api.getRecentErrors()
+  }, [api])
+
   const value = useMemo<AppStateContextValue>(
     () => ({
       loading,
@@ -444,6 +453,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       updateChannel,
       updatesLive,
       updateSettings,
+      getRecentErrors,
       busy,
     }),
     [
@@ -463,6 +473,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       updateChannel,
       updatesLive,
       updateSettings,
+      getRecentErrors,
       busy,
     ],
   )

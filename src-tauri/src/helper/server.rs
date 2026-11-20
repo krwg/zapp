@@ -13,8 +13,10 @@ use std::os::windows::process::CommandExt;
 
 use crate::engine::kill_orphan_winws;
 
+use super::paths::{managed_engine_prefix, validate_winws_paths};
 use super::protocol::{HelperRequest, HelperResponse, HelperStatus};
 use super::{helper_state_dir, token_path, HELPER_PORT};
+use std::path::Path;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -215,6 +217,12 @@ fn spawn_winws(
     args: &[String],
     strategy: &str,
 ) -> Result<Child, String> {
+    let prefix = managed_engine_prefix();
+    let (winws_path, work_path) =
+        validate_winws_paths(Path::new(winws), Path::new(work_dir), &prefix)?;
+    let winws = winws_path.to_string_lossy();
+    let work_dir = work_path.to_string_lossy();
+
     let state_dir = helper_state_dir();
     std::fs::create_dir_all(&state_dir).ok();
     let log_path = state_dir.join("winws.last.log");
@@ -225,7 +233,7 @@ fn spawn_winws(
     script.push_str("setlocal DisableDelayedExpansion\r\n");
     script.push_str(&format!("cd /d \"{}\"\r\n", work_dir));
     script.push('"');
-    script.push_str(winws);
+    script.push_str(&winws);
     script.push('"');
     for a in args {
         script.push(' ');
@@ -253,9 +261,9 @@ fn spawn_winws(
         .try_clone()
         .map_err(|e| format!("cannot clone log handle: {e}"))?;
 
-    let mut cmd = Command::new(winws);
+    let mut cmd = Command::new(winws.as_ref());
     cmd.args(args)
-        .current_dir(work_dir)
+        .current_dir(work_dir.as_ref())
         .stdin(Stdio::null())
         .stdout(Stdio::from(log_file))
         .stderr(Stdio::from(log_err));

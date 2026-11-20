@@ -12,14 +12,20 @@ interface MarkdownProps {
 
 function inline(text: string): ReactNode[] {
   const parts: ReactNode[] = []
-  const re = /(\*\*[^*]+\*\*|https?:\/\/\S+)/g
+  const re = /(`[^`]+`|\*\*[^*]+\*\*|https?:\/\/\S+)/g
   let last = 0
   let m: RegExpExecArray | null
   let key = 0
   while ((m = re.exec(text))) {
     if (m.index > last) parts.push(text.slice(last, m.index))
     const token = m[0]
-    if (token.startsWith('**')) {
+    if (token.startsWith('`')) {
+      parts.push(
+        <code key={key++} className={styles.codeInline}>
+          {token.slice(1, -1)}
+        </code>,
+      )
+    } else if (token.startsWith('**')) {
       parts.push(<strong key={key++}>{token.slice(2, -2)}</strong>)
     } else {
       parts.push(
@@ -34,53 +40,168 @@ function inline(text: string): ReactNode[] {
   return parts
 }
 
-function normalize(source: string): string[] {
-  return source
-    .replace(/\r\n/g, '\n')
-    .split(/\n+/)
-    .map((l) => l.trim())
-    .filter(Boolean)
+function headingLevel(line: string): number | null {
+  const m = /^(#{1,6})\s+(.+)$/.exec(line)
+  if (!m) return null
+  return m[1].length
+}
+
+function headingText(line: string): string {
+  return line.replace(/^#{1,6}\s+/, '')
+}
+
+function listItem(line: string): { ordered: boolean; text: string } | null {
+  const ul = /^[-*]\s+(.+)$/.exec(line)
+  if (ul) return { ordered: false, text: ul[1] }
+  const ol = /^\d+[.)]\s+(.+)$/.exec(line)
+  if (ol) return { ordered: true, text: ol[1] }
+  return null
 }
 
 export function Markdown({ source, compact }: MarkdownProps) {
-  const lines = normalize(source)
+  const raw = source.replace(/\r\n/g, '\n')
+  const lines = raw.split('\n')
   const nodes: ReactNode[] = []
-  let list: string[] = []
   let key = 0
 
-  const flushList = () => {
-    if (!list.length) return
-    nodes.push(
-      <ul key={key++} className={styles.list}>
-        {list.map((item, i) => (
-          <li key={i}>{inline(item)}</li>
-        ))}
-      </ul>,
-    )
-    list = []
-  }
+  let i = 0
+  while (i < lines.length) {
+    const line = lines[i]
+    const trimmed = line.trim()
 
-  for (const line of lines) {
-    if (line.startsWith('* ') || line.startsWith('- ')) {
-      list.push(line.slice(2))
+    if (!trimmed) {
+      i += 1
       continue
     }
-    flushList()
-    if (line.startsWith('**Full Changelog**') || line.toLowerCase().startsWith('full changelog')) {
+
+    // Fenced code block
+    if (trimmed.startsWith('```')) {
+      const buf: string[] = []
+      i += 1
+      while (i < lines.length && !lines[i].trim().startsWith('```')) {
+        buf.push(lines[i])
+        i += 1
+      }
+      i += 1 // closing fence
       nodes.push(
-        <p key={key++} className={styles.meta}>
-          {inline(line.replace(/\*\*/g, ''))}
-        </p>,
+        <pre key={key++} className={styles.codeBlock}>
+          <code>{buf.join('\n')}</code>
+        </pre>,
       )
       continue
     }
-    nodes.push(
-      <p key={key++} className={styles.p}>
-        {inline(line)}
-      </p>,
-    )
+
+    const level = headingLevel(trimmed)
+    if (level) {
+      const text = headingText(trimmed)
+      const Tag = (`h${Math.min(level, 4)}` as 'h1' | 'h2' | 'h3' | 'h4')
+      nodes.push(
+        <Tag key={key++} className={styles[`h${Math.min(level, 4)}` as 'h1' | 'h2' | 'h3' | 'h4']}>
+          {inline(text)}
+        </Tag>,
+      )
+      i += 1
+      continue
+    }
+
+    // Blockquote / GitHub callout
+    if (trimmed.startsWith('>')) {
+      const buf: string[] = []
+      while (i < lines.length && lines[i].trim().startsWith('>')) {
+        buf.push(lines[i].trim().replace(/^>\s?/, ''))
+        i += 1
+      }
+      const first = buf[0] ?? ''
+      const callout = /^\[!(TIP|NOTE|WARNING|IMPORTANT|CAUTION)\]\s*(.*)$/i.exec(first)
+      if (callout) {
+        const rest = [callout[2], ...buf.slice(1)].filter(Boolean).join(' ')
+        nodes.push(
+          <aside key={key++} className={styles.callout} data-kind={callout[1].toLowerCase()}>
+            <div className={styles.calloutLabel}>{callout[1].toUpperCase()}</div>
+            <div>{inline(rest)}</div>
+          </aside>,
+        )
+      } else {
+        nodes.push(
+          <blockquote key={key++} className={styles.quote}>
+            {buf.map((b, idx) => (
+              <p key={idx} className={styles.p}>
+                {inline(b)}
+              </p>
+            ))}
+          </blockquote>,
+        )
+      }
+      continue
+    }
+
+    // Lists (ul / ol) — consecutive items
+    const firstItem = listItem(trimmed)
+    if (firstItem) {
+      const ordered = firstItem.ordered
+      const items: string[] = []
+      while (i < lines.length) {
+        const t = lines[i].trim()
+        if (!t) {
+          // blank inside list ends it
+          break
+        }
+        const item = listItem(t)
+        if (!item || item.ordered !== ordered) break
+        items.push(item.text)
+        i += 1
+      }
+      const ListTag = ordered ? 'ol' : 'ul'
+      nodes.push(
+        <ListTag key={key++} className={styles.list}>
+          {items.map((item, idx) => (
+            <li key={idx}>{inline(item)}</li>
+          ))}
+        </ListTag>,
+      )
+      continue
+    }
+
+    // Horizontal rule
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+      nodes.push(<hr key={key++} className={styles.hr} />)
+      i += 1
+      continue
+    }
+
+    // Paragraph (merge soft-wrapped consecutive non-special lines)
+    const para: string[] = [trimmed]
+    i += 1
+    while (i < lines.length) {
+      const t = lines[i].trim()
+      if (!t) break
+      if (
+        headingLevel(t) ||
+        listItem(t) ||
+        t.startsWith('>') ||
+        t.startsWith('```') ||
+        /^(-{3,}|\*{3,}|_{3,})$/.test(t)
+      ) {
+        break
+      }
+      para.push(t)
+      i += 1
+    }
+    const joined = para.join(' ')
+    if (joined.toLowerCase().startsWith('full changelog') || joined.startsWith('**Full Changelog**')) {
+      nodes.push(
+        <p key={key++} className={styles.meta}>
+          {inline(joined.replace(/\*\*/g, ''))}
+        </p>,
+      )
+    } else {
+      nodes.push(
+        <p key={key++} className={styles.p}>
+          {inline(joined)}
+        </p>,
+      )
+    }
   }
-  flushList()
 
   return (
     <div className={[styles.root, compact ? styles.compact : ''].join(' ')}>{nodes}</div>
@@ -89,6 +210,13 @@ export function Markdown({ source, compact }: MarkdownProps) {
 
 export function markdownPreview(source: string, maxLen = 140): string {
   const plain = source
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^\s*[-*]\s+/gm, '')
+    .replace(/^\s*\d+[.)]\s+/gm, '')
+    .replace(/^>\s?/gm, '')
+    .replace(/\[!(TIP|NOTE|WARNING|IMPORTANT|CAUTION)\]/gi, '')
+    .replace(/`([^`]+)`/g, '$1')
     .replace(/\*\*/g, '')
     .replace(/https?:\/\/\S+/g, '')
     .replace(/\s+/g, ' ')
