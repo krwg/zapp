@@ -49,9 +49,10 @@ body:
       label: Environment
       description: App / engine versions, OS, elevated — paste from zapp About → Report a bug auto-block if available
       placeholder: |
-        - App: 0.2.5
+        - App: 0.2.7
         - Engine: …
-        - OS: Windows
+        - OS: Windows 11
+        - Elevated helper: yes/no
     validations:
       required: false
   - type: textarea

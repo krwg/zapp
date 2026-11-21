@@ -1,0 +1,35 @@
+name: Feature request
+description: Suggest an improvement that fits zapp’s Windows-only, soft-minimal scope
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is awkward or missing today?
+      placeholder: I’m always frustrated when…
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should zapp do instead? Keep it concrete.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches or existing settings you tried
+    validations:
+      required: false
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This stays on Windows / Tauri (no macOS/Linux port request)
+        - label: This does not require telemetry or accounts
+        - label: I read CONTRIBUTING.md scope notes

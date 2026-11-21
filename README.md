@@ -74,7 +74,16 @@ npm run tauri:dev     # desktop app
 npm run tauri:build   # NSIS + MSI
 ```
 
-You need the Rust toolchain and MSVC Build Tools. Architecture notes are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Per-version changes are on the [Releases](https://github.com/krwg/zapp/releases) page.
+You need the Rust toolchain and MSVC Build Tools. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Docs
+
+| | |
+|--|--|
+| [docs/](docs/README.md) | How it works, privacy, troubleshooting, architecture |
+| [CHANGELOG.md](CHANGELOG.md) | Version history |
+| [SECURITY.md](SECURITY.md) | Vulnerability reporting |
+| [Releases](https://github.com/krwg/zapp/releases) | Installers + SHA256 |
 
 ## Credits
 

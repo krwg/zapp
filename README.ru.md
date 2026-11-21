@@ -69,7 +69,16 @@ npm run tauri:dev     # десктопное приложение
 npm run tauri:build   # NSIS + MSI
 ```
 
-Нужны Rust и MSVC Build Tools. Архитектура — в [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Изменения по версиям — на странице [Releases](https://github.com/krwg/zapp/releases).
+Нужны Rust и MSVC Build Tools. См. [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Документация
+
+| | |
+|--|--|
+| [docs/](docs/README.md) | Как работает, приватность, troubleshooting, архитектура |
+| [CHANGELOG.md](CHANGELOG.md) | История версий |
+| [SECURITY.md](SECURITY.md) | Сообщения об уязвимостях |
+| [Releases](https://github.com/krwg/zapp/releases) | Установщики + SHA256 |
 
 ## Авторы движка
 

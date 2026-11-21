@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Releases & SHA256
+    url: https://github.com/krwg/zapp/releases
+    about: Download installers and verify hashes
+  - name: Documentation
+    url: https://github.com/krwg/zapp/blob/main/docs/README.md
+    about: How it works, privacy, troubleshooting, architecture
+  - name: Security report
+    url: https://github.com/krwg/zapp/blob/main/SECURITY.md
+    about: Vulnerabilities — don’t file a public bug for exploit details
