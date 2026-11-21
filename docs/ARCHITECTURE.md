@@ -28,7 +28,7 @@ The source repo does **not** ship WinDivert / `winws`. End-user packs are downlo
 
 - Binary: `%LOCALAPPDATA%\zapp\zapp-helper.exe` (staged copy of the elevated helper; skip copy when size/mtime already match)
 - IPC: Windows named pipe `\\.\pipe\zapp-helper` (no TCP listen; token required; Medium-IL ACL so unelevated UI can connect)
-- Auth: token file `%LOCALAPPDATA%\zapp\helper.token`
+- Auth: token file `%LOCALAPPDATA%\zapp\helper.token` (ACL: current user read, SYSTEM full). Any process under that Windows user can read the token and talk to the helper; it never leaves the machine.
 - Starts / stops `winws` after the user approved UAC once
 - Path allowlist: managed packs under AppData or ProgramData (`bin` or pack-root cwd)
 - `InstallEngine`: copies a staged AppData pack into ProgramData and applies ACL
