@@ -63,14 +63,14 @@ The leap from **0.2.6 → 0.2.7**: from a solid trust-hardened client to a produ
 | `zapp_0.2.7_x64-setup.exe` | Recommended · NSIS · cleanup page |
 | `zapp_0.2.7_x64_en-US.msi` | Optional · no cleanup page |
 
-SHA256 (filled after CI artifacts land):
+SHA256:
 
 ```
 zapp_0.2.7_x64-setup.exe
-(pending CI)
+7E7A0DD5303E486EBAF561F7FD028B403FB93B7E9E2E4BD07C05745887C4870F
 
 zapp_0.2.7_x64_en-US.msi
-(pending CI)
+7C010B5091EB70B6F666E51A6F09B6DDCB6E5C1971DAD1E6C948C8FDAC959680
 ```
 
 ### Verify
