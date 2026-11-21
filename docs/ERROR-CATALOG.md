@@ -38,7 +38,7 @@
 5. **Несовместимый Flowseal major** — semver gate на pack.
 6. **DNS broken (нет резолва youtube.com)** — preflight DNS отдельно от TCP.
 7. **TCP 443 ok, TLS fail** — будущая HTTPS-проба (как Zapret-GUI matrix).
-8. **HTTP3/QUIC only block** — отдельный score канал.
+8. **HTTP3/QUIC only block** — soft UDP:443 smoke в Smart check (`protocol=quic`); не гейтит pass alone. Soft HTTPS также: `i.ytimg.com`, `youtubei.googleapis.com`, `googlevideo.com`.
 9. **Discord voice UDP fail при web ok** — UDP probe / stun.
 10. **Гигантский hostlist → медленный старт** — timeout budget.
 11. **Антивирус карантин WinDivert.sys** — file exists но load fail.
@@ -54,7 +54,7 @@
 21. **UI poll during long UAC** — status stays `starting`, не error до timeout.
 22. **Double-click Start** — busy lock (уже есть).
 23. **Stop во время starting** — cancel elevate wait.
-24. **Sleep/hibernate** — refresh_status_from_os на resume.
+24. **Sleep/hibernate** — `refresh_status_from_os` demotes dead winws; if `restoreBypassOnResume` + session desired → auto `start` after wake (wall-clock gap).
 25. **Single-instance second launch** — focus existing (Zapret-GUI pattern).
 
 ## UI контракт (прочее)

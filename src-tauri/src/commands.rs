@@ -42,6 +42,7 @@ pub fn set_engine_running(
 ) -> AppResult<EngineStatus> {
     match state.engine.set_running(running) {
         Ok(status) => {
+            state.remember_bypass_desired(running);
             state.history.push(
                 "engine",
                 if running {
@@ -229,11 +230,43 @@ pub fn open_external_url(url: String) -> AppResult<()> {
 }
 
 #[tauri::command]
+pub fn import_engine_pack(state: State<'_, AppState>) -> AppResult<UpdateChannel> {
+    state.import_engine_pack_interactive()
+}
+
+#[tauri::command]
 pub fn get_recent_errors(state: State<'_, AppState>) -> Vec<String> {
-    state
-        .history
-        .list(32)
-        .into_iter()
+    bug_report_bundle(state).recent_errors
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BugReportBundle {
+    pub app_version: String,
+    pub engine_version: String,
+    pub engine_root: String,
+    pub engine_installed: bool,
+    pub elevated: bool,
+    pub diagnostics_mode: String,
+    pub bypass_desired: bool,
+    pub active_strategy: Option<String>,
+    pub recent_errors: Vec<String>,
+    /// Newest-first history lines for GitHub (kind + message).
+    pub recent_log: Vec<String>,
+}
+
+#[tauri::command]
+pub fn get_bug_report_bundle(state: State<'_, AppState>) -> BugReportBundle {
+    bug_report_bundle(state)
+}
+
+fn bug_report_bundle(state: State<'_, AppState>) -> BugReportBundle {
+    let snap = state.snapshot();
+    let layout = state.engine.layout();
+    let session = crate::persist::load_session(state.engine.app_data());
+    let events = state.history.list(48);
+    let recent_errors: Vec<String> = events
+        .iter()
         .filter(|e| {
             let kind = e.kind.to_ascii_lowercase();
             let msg = e.message.to_ascii_lowercase();
@@ -241,8 +274,39 @@ pub fn get_recent_errors(state: State<'_, AppState>) -> Vec<String> {
                 || kind.contains("fail")
                 || msg.contains("fail")
                 || msg.contains("error")
+                || msg.contains("uac")
+                || msg.contains("denied")
+                || msg.contains("refused")
+                || msg.contains("fault")
+                || msg.contains("cancelled")
         })
-        .take(8)
-        .map(|e| format!("[{}] {}", e.kind, e.message))
-        .collect()
+        .take(12)
+        .map(|e| format!("{} · [{}] {}", e.at, e.kind, e.message))
+        .collect();
+    let recent_log: Vec<String> = events
+        .iter()
+        .take(24)
+        .map(|e| format!("{} · [{}] {}", e.at, e.kind, e.message))
+        .collect();
+
+    let diagnostics_mode = match snap.settings.diagnostics_mode {
+        crate::model::DiagnosticsMode::Fast => "fast",
+        crate::model::DiagnosticsMode::Thorough => "thorough",
+    };
+
+    BugReportBundle {
+        app_version: snap.system.app_version,
+        engine_version: snap.system.engine_version,
+        engine_root: layout.root.display().to_string(),
+        engine_installed: layout.is_installed(),
+        elevated: snap.system.elevated,
+        diagnostics_mode: diagnostics_mode.into(),
+        bypass_desired: session.bypass_desired,
+        active_strategy: state
+            .engine
+            .active_strategy()
+            .or(session.active_strategy),
+        recent_errors,
+        recent_log,
+    }
 }

@@ -40,7 +40,7 @@ The NSIS `setup.exe` is the one I recommend: on a reinstall it can wipe the old 
 
 ## What it does on your machine
 
-`winws` uses [WinDivert](https://reqrypt.org/windivert.html), which loads a kernel driver, so it needs admin rights. zapp starts one elevated helper, `zapp-helper.exe`, and talks to it over a token-authenticated TCP port on `127.0.0.1`. Nothing there is reachable from the network.
+`winws` uses [WinDivert](https://reqrypt.org/windivert.html), which loads a kernel driver, so it needs admin rights. zapp starts one elevated helper, `zapp-helper.exe`, and talks to it over a token-authenticated **named pipe** (`\\.\pipe\zapp-helper`). That stays on the local machine — no TCP listen port.
 
 On first run, and when Engine or Strategies update, zapp downloads the Flowseal pack from GitHub. New installs prefer `%ProgramData%\zapp\engine\` (elevated helper + locked ACL); older / fallback packs stay under `%APPDATA%\app.zapp.desktop\engine\`. App updates come from [krwg/zapp](https://github.com/krwg/zapp/releases). Apart from GitHub release checks and the site probes you start yourself, zapp makes no other requests. There is no telemetry. Settings and logs stay in `%APPDATA%\app.zapp.desktop\`, helper state in `%LOCALAPPDATA%\zapp\`.
 

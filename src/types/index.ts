@@ -145,6 +145,9 @@ export interface AppSettings {
   appearance: ThemeMode
   startWithSystem: boolean
   minimizeToTray: boolean
+  restoreBypassOnLogin: boolean
+  restoreBypassOnResume: boolean
+  restoreBypassOnNetworkChange: boolean
   autoCheckUpdates: boolean
   autoInstallUpdates: boolean
   autoDiagnostics: boolean

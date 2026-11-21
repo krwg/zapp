@@ -77,3 +77,23 @@ commands.allow = ["run_preflight"]
 identifier = "allow-reset-engine"
 description = "Hard-reset winws and WinDivert leftovers"
 commands.allow = ["reset_engine"]
+
+[[permission]]
+identifier = "allow-open-external-url"
+description = "Open https links (bug report, GitHub) in the system browser"
+commands.allow = ["open_external_url"]
+
+[[permission]]
+identifier = "allow-get-recent-errors"
+description = "Read recent error history for bug reports"
+commands.allow = ["get_recent_errors"]
+
+[[permission]]
+identifier = "allow-get-bug-report-bundle"
+description = "Collect versions, engine path, and recent logs for bug reports"
+commands.allow = ["get_bug_report_bundle"]
+
+[[permission]]
+identifier = "allow-import-engine-pack"
+description = "Import a Flowseal engine zip from disk (offline)"
+commands.allow = ["import_engine_pack"]

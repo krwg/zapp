@@ -15,8 +15,20 @@ pub use protocol::{HelperRequest, HelperResponse, HelperStatus};
 
 use std::path::PathBuf;
 
+use interprocess::local_socket::{GenericNamespaced, Name, ToNsName};
+
+/// Legacy TCP port (removed in 1c — named pipe only). Kept for docs/migration notes.
+#[allow(dead_code)]
 pub const HELPER_PORT: u16 = 39221;
+/// Namespaced local socket / Windows named pipe: `\\.\pipe\zapp-helper`.
+pub const HELPER_PIPE: &str = "zapp-helper";
 pub const HELPER_FLAG: &str = "--helper";
+
+pub fn helper_pipe_name() -> Result<Name<'static>, String> {
+    HELPER_PIPE
+        .to_ns_name::<GenericNamespaced>()
+        .map_err(|e| format!("helper pipe name: {e}"))
+}
 
 pub fn helper_state_dir() -> PathBuf {
     let base = std::env::var("LOCALAPPDATA")

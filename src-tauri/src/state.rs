@@ -59,9 +59,21 @@ impl AppState {
         app_data: std::path::PathBuf,
         engine: ManagedEngine,
         engine_version: String,
-        profiles: Vec<Profile>,
+        mut profiles: Vec<Profile>,
     ) -> Self {
         let updates = UpdateManager::new(seed_updates(&engine_version), app_data.clone());
+        let settings = crate::persist::load_settings(&app_data).unwrap_or_else(seed_settings);
+        let auto_update_enabled = settings.auto_check_updates;
+        // Restore last active strategy name into the engine if still present.
+        if let Some(name) = crate::persist::load_session(&app_data).active_strategy {
+            if profiles.iter().any(|p| p.name == name) {
+                let want = name.clone();
+                engine.set_active_strategy(name);
+                for p in &mut profiles {
+                    p.is_active = p.name == want;
+                }
+            }
+        }
         Self {
             engine,
             updates,
@@ -74,14 +86,14 @@ impl AppState {
                 profiles,
                 services: seed_services(),
                 diagnostics: seed_diagnostics(),
-                settings: seed_settings(),
+                settings,
                 about: seed_about(),
                 system: SystemInfo {
                     app_version: env!("CARGO_PKG_VERSION").into(),
                     engine_version: engine_version.clone(),
                     strategies_version: engine_version,
                     last_update_check_at: None,
-                    auto_update_enabled: true,
+                    auto_update_enabled,
                     elevated: is_elevated(),
                 },
             }),
@@ -146,9 +158,16 @@ impl AppState {
             .cloned()
             .ok_or_else(|| AppError::from("Profile not found"))?;
         self.engine.set_active_strategy(active.name.clone());
+        let desired = crate::persist::load_session(self.engine.app_data()).bypass_desired
+            || matches!(self.engine.status(), EngineStatus::Running);
+        crate::persist::set_bypass_desired(
+            self.engine.app_data(),
+            desired,
+            Some(active.name.clone()),
+        );
         self.history
             .push("profile", format!("Activated profile '{}'", active.name));
-        
+
         if matches!(self.engine.status(), EngineStatus::Running) {
             let _ = self.engine.start(Some(&active.name));
         }
@@ -493,6 +512,29 @@ impl AppState {
         Ok((outcome.channel, outcome.restart_required))
     }
 
+    /// Offline Flowseal zip import (native file picker).
+    pub fn import_engine_pack_interactive(&self) -> AppResult<UpdateChannel> {
+        #[cfg(not(windows))]
+        {
+            return Err(AppError::from("Offline pack import is Windows-only"));
+        }
+        #[cfg(windows)]
+        {
+            let path = rfd::FileDialog::new()
+                .add_filter("Flowseal / zapret zip", &["zip"])
+                .set_title("Import engine pack")
+                .pick_file()
+                .ok_or_else(|| AppError::from("Import cancelled"))?;
+            let outcome = self.updates.import_engine_zip(&path)?;
+            self.apply_update_outcome(&outcome)?;
+            self.history.push(
+                "engine",
+                format!("Imported engine pack from {}", path.display()),
+            );
+            Ok(outcome.channel)
+        }
+    }
+
     fn apply_update_outcome(
         &self,
         outcome: &crate::engine::UpdateOutcome,
@@ -532,6 +574,15 @@ impl AppState {
         if let Some(v) = patch.minimize_to_tray {
             store.settings.minimize_to_tray = v;
         }
+        if let Some(v) = patch.restore_bypass_on_login {
+            store.settings.restore_bypass_on_login = v;
+        }
+        if let Some(v) = patch.restore_bypass_on_resume {
+            store.settings.restore_bypass_on_resume = v;
+        }
+        if let Some(v) = patch.restore_bypass_on_network_change {
+            store.settings.restore_bypass_on_network_change = v;
+        }
         if let Some(v) = patch.auto_check_updates {
             store.settings.auto_check_updates = v;
         }
@@ -563,13 +614,77 @@ impl AppState {
             store.settings.strategies_path = v;
         }
         store.system.auto_update_enabled = store.settings.auto_check_updates;
-        store.settings.clone()
+        let settings = store.settings.clone();
+        drop(store);
+        crate::persist::save_settings(self.engine.app_data(), &settings);
+        settings
     }
 
     pub fn set_theme(&self, mode: ThemeMode) -> ThemeMode {
         let mut store = self.inner.lock().expect("state lock");
         store.settings.appearance = mode.clone();
+        let settings = store.settings.clone();
+        drop(store);
+        crate::persist::save_settings(self.engine.app_data(), &settings);
         mode
+    }
+
+    pub fn remember_bypass_desired(&self, desired: bool) {
+        let strategy = self.engine.active_strategy();
+        crate::persist::set_bypass_desired(self.engine.app_data(), desired, strategy);
+    }
+
+    pub fn clear_bypass_desired(&self) {
+        self.remember_bypass_desired(false);
+    }
+
+    /// Start bypass again when session says it should be on (login / resume / network).
+    pub fn try_restore_bypass(&self, reason: &str) -> bool {
+        let settings = self.snapshot().settings;
+        let allow = match reason {
+            "login" => settings.restore_bypass_on_login,
+            "resume" => settings.restore_bypass_on_resume,
+            "network" => settings.restore_bypass_on_network_change,
+            _ => {
+                settings.restore_bypass_on_login
+                    || settings.restore_bypass_on_resume
+                    || settings.restore_bypass_on_network_change
+            }
+        };
+        if !allow {
+            return false;
+        }
+        let session = crate::persist::load_session(self.engine.app_data());
+        if !session.bypass_desired {
+            return false;
+        }
+        if matches!(
+            self.engine.status(),
+            EngineStatus::Running | EngineStatus::Starting
+        ) {
+            return true;
+        }
+        if let Some(name) = session.active_strategy.clone() {
+            self.engine.set_active_strategy(name);
+        }
+        match self.engine.set_running(true) {
+            Ok(_) => {
+                self.history.push(
+                    "engine",
+                    format!("Bypass restored after {reason}"),
+                );
+                log::info!("bypass restored after {reason}");
+                true
+            }
+            Err(e) => {
+                log::warn!("bypass restore after {reason} failed: {}", e.log_message());
+                self.history.push(
+                    "error",
+                    format!("Bypass restore ({reason}): {}", e.log_message()),
+                );
+                false
+            }
+        }
     }
 }
 
@@ -761,6 +876,9 @@ fn seed_settings() -> AppSettings {
         appearance: ThemeMode::System,
         start_with_system: true,
         minimize_to_tray: true,
+        restore_bypass_on_login: true,
+        restore_bypass_on_resume: true,
+        restore_bypass_on_network_change: true,
         auto_check_updates: true,
         auto_install_updates: true,
         auto_diagnostics: true,

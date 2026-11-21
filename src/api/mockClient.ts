@@ -356,7 +356,36 @@ export const mockApi: ZappApi = {
   },
 
   async getRecentErrors() {
-    return []
+    return [
+      '2026-11-21T13:50:00Z · [error] [UacCancelled] Не удалось получить права | detail=User declined the UAC prompt | hint=…',
+    ]
+  },
+
+  async getBugReportBundle() {
+    return {
+      appVersion: state.system.appVersion,
+      engineVersion: state.system.engineVersion,
+      engineRoot: 'C:\\mock\\engine\\current',
+      engineInstalled: true,
+      elevated: state.system.elevated,
+      diagnosticsMode: state.settings.diagnosticsMode,
+      bypassDesired: false,
+      activeStrategy: 'general (FAKE TLS AUTO)',
+      recentErrors: await this.getRecentErrors(),
+      recentLog: [
+        '2026-11-21T13:50:00Z · [error] [UacCancelled] Не удалось получить права | detail=User declined…',
+        '2026-11-21T13:49:50Z · [app] zapp started (engine mock, elevated=false)',
+      ],
+    }
+  },
+
+  async importEnginePack() {
+    await delay(200)
+    const ch = state.updates.find((c) => c.id === 'engine')
+    if (!ch) throw new Error('Engine channel missing')
+    ch.status = 'up_to_date'
+    ch.releaseNotes = 'Imported from local zip (mock).'
+    return clone(ch)
   },
 }
 

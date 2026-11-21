@@ -3,28 +3,13 @@
 // ╚════════════════════════════════════════════════════╝
 
 use std::path::Path;
-use std::process::{Command, Stdio};
 
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
-
-use crate::engine::faults::{classify_spawn_failure, EngineFault, FaultCode};
-
-#[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+use crate::engine::faults::{EngineFault, FaultCode};
 
 pub fn is_elevated() -> bool {
     #[cfg(windows)]
     {
-        Command::new("net")
-            .arg("session")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .creation_flags(CREATE_NO_WINDOW)
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
+        crate::win32::is_process_elevated()
     }
     #[cfg(not(windows))]
     {
@@ -32,10 +17,50 @@ pub fn is_elevated() -> bool {
     }
 }
 
-fn ps_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "''"))
+/// Quote a single Windows command-line argument (CommandLineToArgvW-compatible-ish).
+fn quote_arg(arg: &str) -> String {
+    if arg.is_empty() {
+        return "\"\"".into();
+    }
+    let needs_quotes = arg.bytes().any(|b| b == b' ' || b == b'\t' || b == b'"');
+    if !needs_quotes {
+        return arg.to_string();
+    }
+    let mut out = String::from('"');
+    let mut backslashes = 0u32;
+    for ch in arg.chars() {
+        if ch == '\\' {
+            backslashes += 1;
+            continue;
+        }
+        if ch == '"' {
+            for _ in 0..(backslashes * 2 + 1) {
+                out.push('\\');
+            }
+            out.push('"');
+            backslashes = 0;
+            continue;
+        }
+        for _ in 0..backslashes {
+            out.push('\\');
+        }
+        backslashes = 0;
+        out.push(ch);
+    }
+    for _ in 0..(backslashes * 2) {
+        out.push('\\');
+    }
+    out.push('"');
+    out
 }
 
+fn join_args(args: &[String]) -> String {
+    args.iter().map(|a| quote_arg(a)).collect::<Vec<_>>().join(" ")
+}
+
+/// Direct elevated winws launch (ShellExecuteEx). Normal Start goes through the helper pipe;
+/// kept for diagnostics / fallback callers.
+#[allow(dead_code)]
 pub fn start_winws_elevated(
     winws: &Path,
     work_dir: &Path,
@@ -43,61 +68,17 @@ pub fn start_winws_elevated(
 ) -> Result<(), EngineFault> {
     #[cfg(windows)]
     {
-        let winws_s = winws.to_string_lossy();
-        let dir_s = work_dir.to_string_lossy();
-
-        let arg_list = if args.is_empty() {
-            "$null".to_string()
-        } else {
-            let parts: Vec<String> = args.iter().map(|a| ps_quote(a)).collect();
-            format!("@({})", parts.join(","))
-        };
-
-        
-        let script = format!(
-            "$ErrorActionPreference='Stop'; try {{ Start-Process -FilePath {file} -WorkingDirectory {dir} -ArgumentList {args} -Verb RunAs -WindowStyle Hidden; exit 0 }} catch {{ if ($_.Exception.Message -match 'canceled|cancelled|1223') {{ exit 1223 }}; Write-Error $_; exit 1 }}",
-            file = ps_quote(&winws_s),
-            dir = ps_quote(&dir_s),
-            args = arg_list,
-        );
-
-        let output = Command::new("powershell")
-            .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-            .map_err(|e| EngineFault::new(FaultCode::UacLaunchFailed, e.to_string()))?;
-
-        let code = output.status.code().unwrap_or(1);
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let combined = format!("{stderr} {stdout}").trim().to_string();
-
-        if code == 0 {
-            return Ok(());
-        }
-        if code == 1223 {
-            return Err(EngineFault::new(
+        let params = join_args(args);
+        match crate::win32::shell_execute_runas(winws, &params, work_dir) {
+            Ok(()) => Ok(()),
+            Err(crate::win32::ElevateError::Cancelled) => Err(EngineFault::new(
                 FaultCode::UacCancelled,
                 "User declined the UAC prompt",
-            ));
+            )),
+            Err(crate::win32::ElevateError::Failed(msg)) => {
+                Err(EngineFault::new(FaultCode::UacLaunchFailed, msg))
+            }
         }
-
-        let classified = classify_spawn_failure(&combined);
-        Err(EngineFault::new(
-            if classified == FaultCode::Unknown {
-                FaultCode::UacLaunchFailed
-            } else {
-                classified
-            },
-            if combined.is_empty() {
-                format!("Elevated Start-Process failed (exit {code})")
-            } else {
-                combined
-            },
-        ))
     }
 
     #[cfg(not(windows))]

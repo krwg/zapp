@@ -14,7 +14,8 @@ use std::time::Duration;
 use std::os::windows::process::CommandExt;
 
 use crate::engine::github::{
-    compare_semver, fetch_flowseal_latest, fetch_zapp_latest, FLOWSEAL_REPO, ZAPP_REPO,
+    asset_download_url, compare_semver, fetch_flowseal_latest, fetch_zapp_latest, FLOWSEAL_REPO,
+    ZAPP_REPO,
 };
 use crate::engine::managed::EngineLayout;
 use crate::error::{AppError, AppResult};
@@ -234,7 +235,7 @@ impl UpdateManager {
         fs::create_dir_all(&downloads).map_err(|e| AppError::from(e.to_string()))?;
         let archive_path = downloads.join(&asset.name);
 
-        download_with_progress(&asset.browser_download_url, &archive_path, |pct| {
+        download_with_progress(&asset_download_url(&asset), &archive_path, |pct| {
             let mut channels = self.channels.lock().expect("updates lock");
             if let Some(channel) = channels.iter_mut().find(|c| c.id == id) {
                 channel.download_progress = Some(pct);
@@ -242,7 +243,33 @@ impl UpdateManager {
             }
         })?;
 
-        if let Err(e) = crate::engine::integrity::verify_zip_sanity(&archive_path) {
+        self.install_flowseal_zip(&archive_path, Some(version), id)
+    }
+
+    /// Offline / mirror import: install a Flowseal-style zip from disk (file picker or path).
+    pub fn import_engine_zip(&self, archive: &Path) -> AppResult<UpdateOutcome> {
+        {
+            let mut channels = self.channels.lock().expect("updates lock");
+            for channel in channels.iter_mut() {
+                if matches!(
+                    channel.id,
+                    UpdateChannelId::Engine | UpdateChannelId::Strategies
+                ) {
+                    channel.status = UpdateChannelStatus::Installing;
+                    channel.download_progress = Some(100);
+                }
+            }
+        }
+        self.install_flowseal_zip(archive, None, UpdateChannelId::Engine)
+    }
+
+    fn install_flowseal_zip(
+        &self,
+        archive_path: &Path,
+        version_hint: Option<String>,
+        id: UpdateChannelId,
+    ) -> AppResult<UpdateOutcome> {
+        if let Err(e) = crate::engine::integrity::verify_zip_sanity(archive_path) {
             self.mark_error(id, e.to_string());
             return Err(e);
         }
@@ -255,17 +282,19 @@ impl UpdateManager {
             }
         }
 
-        // Stage under AppData (user-writable), then prefer elevated ProgramData install + ACL.
+        let staging_key = version_hint
+            .clone()
+            .unwrap_or_else(|| format!("import-{}", crate::util::now_iso().replace(':', "-")));
         let staging = self
             .app_data
             .join("downloads")
             .join("engine-staging")
-            .join(&version);
+            .join(&staging_key);
         if staging.exists() {
             fs::remove_dir_all(&staging).map_err(|e| AppError::from(e.to_string()))?;
         }
         fs::create_dir_all(&staging).map_err(|e| AppError::from(e.to_string()))?;
-        extract_zip(&archive_path, &staging)?;
+        extract_zip(archive_path, &staging)?;
 
         let nested = normalize_extracted_pack(&staging)?;
         let staged_root = flatten_pack_to_version_dir(&staging, &nested)?;
@@ -275,6 +304,10 @@ impl UpdateManager {
                 "Engine pack installed but bin/*.bin payloads are missing — re-download Engine",
             ));
         }
+
+        let version = version_hint.unwrap_or_else(|| {
+            crate::engine::discover::read_local_version(&staged_root)
+        });
 
         let layout_root = match crate::helper::helper_install_engine(
             &self.app_data,
@@ -304,6 +337,11 @@ impl UpdateManager {
                 dest
             }
         };
+        // Roadmap hygiene: keep current + previous (N-1), drop older version dirs.
+        if let Some(parent) = layout_root.parent() {
+            crate::engine::pack::cleanup_old_engine_packs(parent, 2);
+        }
+        crate::engine::pack::cleanup_old_engine_packs(&self.app_data.join("engine"), 2);
         let layout = EngineLayout::from_pack(layout_root);
 
         let mut channels = self.channels.lock().expect("updates lock");
@@ -317,6 +355,8 @@ impl UpdateManager {
                 channel.latest_version = version.clone();
                 channel.download_progress = None;
                 channel.last_checked_at = Some(now_iso());
+                channel.release_notes =
+                    format!("Installed from local zip (`{}`).", archive_path.display());
             }
         }
 
@@ -366,7 +406,7 @@ impl UpdateManager {
         fs::create_dir_all(&downloads).map_err(|e| AppError::from(e.to_string()))?;
         let dest = downloads.join(&asset.name);
 
-        download_with_progress(&asset.browser_download_url, &dest, |pct| {
+        download_with_progress(&asset_download_url(&asset), &dest, |pct| {
             let mut channels = self.channels.lock().expect("updates lock");
             if let Some(channel) = channels
                 .iter_mut()
@@ -488,43 +528,30 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> AppResult<()> {
 /// returns os error 740 for an installer marked requireAdministrator.
 #[cfg(windows)]
 fn launch_elevated(file: &Path, args: &[String]) -> AppResult<()> {
-    let quote = |s: &str| format!("'{}'", s.replace('\'', "''"));
-    let file_arg = quote(&file.to_string_lossy());
-    let arg_list = if args.is_empty() {
-        String::new()
-    } else {
-        let parts: Vec<String> = args.iter().map(|a| quote(a)).collect();
-        format!(" -ArgumentList @({})", parts.join(","))
-    };
-    let script = format!(
-        "$ErrorActionPreference='Stop'; try {{ Start-Process -FilePath {file_arg}{arg_list} -Verb RunAs; exit 0 }} catch {{ if ($_.Exception.Message -match 'canceled|cancelled|1223') {{ exit 1223 }}; Write-Error $_; exit 1 }}"
-    );
-
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-WindowStyle",
-            "Hidden",
-            "-Command",
-            &script,
-        ])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .map_err(|e| AppError::from(format!("Failed to launch installer: {e}")))?;
-
-    let code = output.status.code().unwrap_or(1);
-    if code == 0 {
-        return Ok(());
-    }
-    if code == 1223 {
-        return Err(AppError::from(
+    let params = args
+        .iter()
+        .map(|a| {
+            if a.chars().any(|c| c.is_whitespace() || c == '"') {
+                format!("\"{}\"", a.replace('"', "\\\""))
+            } else {
+                a.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let work = file
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    match crate::win32::shell_execute_runas(file, &params, &work) {
+        Ok(()) => Ok(()),
+        Err(crate::win32::ElevateError::Cancelled) => Err(AppError::from(
             "Installer was not started: the UAC prompt was declined.",
-        ));
+        )),
+        Err(crate::win32::ElevateError::Failed(msg)) => {
+            Err(AppError::from(format!("Failed to launch installer: {msg}")))
+        }
     }
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    Err(AppError::from(format!(
-        "Failed to launch installer: {stderr}"
-    )))
 }
 
 fn launch_app_installer(path: &Path) -> AppResult<()> {

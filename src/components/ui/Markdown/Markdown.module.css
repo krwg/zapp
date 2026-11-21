@@ -109,6 +109,38 @@
   border-top: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
 }
 
+.tableWrap {
+  width: 100%;
+  overflow-x: auto;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.table th,
+.table td {
+  padding: 0.45em 0.7em;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 10%, transparent);
+}
+
+.table th {
+  color: var(--text-primary);
+  font-weight: var(--weight-semibold);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.table tr:last-child td {
+  border-bottom: none;
+}
+
 .root a {
   color: var(--text-primary);
   text-decoration: underline;

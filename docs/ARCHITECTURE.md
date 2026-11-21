@@ -26,7 +26,7 @@ The source repo does **not** ship WinDivert / `winws`. End-user packs are downlo
 ## Helper
 
 - Binary: `%LOCALAPPDATA%\zapp\zapp-helper.exe` (copy of the elevated helper)
-- Listens on `127.0.0.1:39221`
+- IPC: Windows named pipe `\\.\pipe\zapp-helper` (no TCP listen; token still required)
 - Auth: token file `%LOCALAPPDATA%\zapp\helper.token`
 - Starts / stops `winws` after the user approved UAC once
 - Path allowlist: managed packs under AppData or ProgramData (`bin` or pack-root cwd)
@@ -45,8 +45,46 @@ The source repo does **not** ship WinDivert / `winws`. End-user packs are downlo
 | Path | Contents |
 |------|----------|
 | `%ProgramData%\zapp\` | Preferred engine packs (ACL: SYSTEM/Admins full, Users RX) |
-| `%APPDATA%\app.zapp.desktop\` | Settings, downloads/staging, fallback engine packs, logs |
+| `%APPDATA%\app.zapp.desktop\` | Settings (`settings.json`), session (`session.json` bypass desired), downloads/staging, fallback engine packs, logs |
 | `%LOCALAPPDATA%\zapp\` | Helper exe + token |
+
+## Bypass restore (roadmap §5) + network memory (§7)
+
+- `session.json` remembers `bypassDesired` + active strategy (set on Start, cleared on Stop / tray Quit).
+- After engine bootstrap at login: if `restoreBypassOnLogin` → `ensure_helper` + start.
+- Background wall-clock watcher: gap &gt; 25s ≈ sleep resume → if `restoreBypassOnResume` → start again.
+- Network fingerprint = default IPv4 gateway + WLAN SSID; on change (if `restoreBypassOnNetworkChange`) restore bypass.
+
+## Smart check probes (§6)
+
+- Critical HTTPS (YouTube / Discord gateway / discord.media TCP alts).
+- Soft: ytimg, youtubei.googleapis.com, **googlevideo.com**, Discord CDN, STUN UDP, **QUIC UDP:443** smoke (reply-based, does not alone fail a mode).
+
+## Elevation (P2)
+
+- Helper / installer / winws UAC via `ShellExecuteExW` `runas` (`win32.rs`) — no PowerShell.
+- `is_elevated` via process token (`TokenElevation`), not `net session`.
+- After engine install: keep newest 2 version dirs under the pack prefix (N−1 cleanup).
+
+## Dev console
+
+- Debug builds attach/alloc a console for logs.
+- Release: set env `ZAPP_CONSOLE=1` before launch.
+
+## CSP
+
+- Tauri `app.security.csp` restricts script/connect/img to self + Tauri IPC/asset schemes.
+
+## Updates · mirrors · offline pack
+
+- GitHub API bases: `ZAPP_GITHUB_API_BASE`, `ZAPP_GITHUB_API_MIRRORS` (comma-separated), then `api.github.com`.
+- Asset CDN rewrite: `ZAPP_GITHUB_ASSET_PREFIX` prepended to release asset URLs.
+- **Import zip** on Updates: native file picker → same install path as online Engine (ProgramData preferred).
+
+## Bug report
+
+- IPC: `get_bug_report_bundle` (+ ACL in `capabilities/default.json`).
+- Issue body includes environment, recent errors, and recent history log.
 
 ## Stack
 

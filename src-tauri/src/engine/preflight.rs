@@ -199,9 +199,9 @@ fn push_conflict_checks(checks: &mut Vec<PreflightCheck>, foreign_winws: bool) {
         ok: conflict.is_none(),
         detail: conflict.clone().unwrap_or_else(|| {
             if foreign_winws {
-                "No GoodbyeDPI / foreign winws / zapret GUI detected".into()
+                "No conflicting DPI tools / foreign winws detected".into()
             } else {
-                "No GoodbyeDPI / foreign zapret GUI detected".into()
+                "No conflicting DPI tools detected".into()
             }
         }),
         fault_code: conflict.is_some().then_some(FaultCode::ConflictingBypass),
@@ -259,11 +259,22 @@ fn extract_path_arg(arg: &str) -> Option<String> {
 }
 
 fn detect_conflicting_bypass(foreign_winws: bool) -> Option<String> {
+    // Common DPI / unblocker GUIs and helpers that fight WinDivert with zapp.
     let names = [
         "goodbyedpi.exe",
         "zapret_gui.exe",
         "zapretgui.exe",
+        "zapret.exe",
         "ezunblock.exe",
+        "blockcheck.exe",
+        "soupfork.exe",
+        "bye-dpi.exe",
+        "byedpi.exe",
+        "ciadpi.exe",
+        "discord_voice_proxy.exe",
+        "youtubeunblok.exe",
+        "youtubeunblock.exe",
+        "nfqws.exe",
     ];
     for name in names {
         if process_running(name) {

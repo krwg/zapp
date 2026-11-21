@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::{AppError, AppResult};
 
@@ -68,4 +68,73 @@ pub fn pack_payloads_present(root: &Path) -> bool {
             .and_then(|x| x.to_str())
             .is_some_and(|ext| ext.eq_ignore_ascii_case("bin"))
     })
+}
+
+/// Keep the newest `keep` version directories under `engine_root` (skip `current`).
+/// Older Flowseal / version folders are removed best-effort (roadmap pack cleanup N-1 → keep 2).
+pub fn cleanup_old_engine_packs(engine_root: &Path, keep: usize) {
+    if keep == 0 || !engine_root.is_dir() {
+        return;
+    }
+
+    let Ok(entries) = fs::read_dir(engine_root) else {
+        return;
+    };
+
+    let mut version_dirs: Vec<(PathBuf, Vec<u32>)> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_string();
+        if name.eq_ignore_ascii_case("current") || name.eq_ignore_ascii_case("downloads") {
+            continue;
+        }
+        // Prefer dirs that look like packs or version containers with a nested pack.
+        let is_pack = path.join("bin").join("winws.exe").is_file()
+            || path.join("bin").join("nfqws").is_file();
+        let has_nested = fs::read_dir(&path).ok().is_some_and(|rd| {
+            rd.flatten().any(|c| {
+                let p = c.path();
+                p.is_dir()
+                    && (p.join("bin").join("winws.exe").is_file()
+                        || p.join("bin").join("nfqws").is_file())
+            })
+        });
+        if !is_pack && !has_nested {
+            continue;
+        }
+        let key = version_sort_key(&name);
+        version_dirs.push((path, key));
+    }
+
+    version_dirs.sort_by(|a, b| b.1.cmp(&a.1));
+    for (path, _) in version_dirs.into_iter().skip(keep) {
+        match fs::remove_dir_all(&path) {
+            Ok(()) => log::info!("removed old engine pack {}", path.display()),
+            Err(e) => log::warn!(
+                "could not remove old engine pack {}: {e}",
+                path.display()
+            ),
+        }
+    }
+}
+
+fn version_sort_key(name: &str) -> Vec<u32> {
+    const PREFIX: &str = "zapret-discord-youtube-";
+    let ver = name.strip_prefix(PREFIX).unwrap_or(name);
+    ver.split('.')
+        .filter_map(|p| {
+            p.chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect::<String>()
+                .parse()
+                .ok()
+        })
+        .collect()
 }

@@ -23,7 +23,7 @@ import type {
   Profile,
   UpdateChannel,
 } from '@/types'
-import type { BugReportPrefill } from '@/types/bugReport'
+import type { BugReportBundle, BugReportPrefill } from '@/types/bugReport'
 import { useLocale } from './LocaleContext'
 import { useToast } from './ToastContext'
 import { useTheme } from './ThemeContext'
@@ -43,10 +43,12 @@ interface AppStateContextValue {
   checkAllServices: (opts?: { silent?: boolean }) => Promise<void>
   checkUpdates: () => Promise<void>
   updateChannel: (id: UpdateChannel['id']) => Promise<void>
+  importEnginePack: () => Promise<void>
   updatesLive: UpdateChannel[]
   updateSettings: (patch: Partial<AppSettings>, opts?: { quiet?: boolean }) => Promise<void>
   getRecentErrors: () => Promise<string[]>
   openBugReport: (message: string, areas?: BugReportPrefill['areas']) => void
+  getBugReportBundle: () => Promise<BugReportBundle>
   busy: Record<string, boolean>
 }
 
@@ -438,6 +440,18 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [api, push, refresh, t, withBusy],
   )
 
+  const importEnginePack = useCallback(async () => {
+    await withBusy('update:engine', async () => {
+      await api.importEnginePack()
+      await refresh()
+      push({
+        title: t('toast.channelUpdatedTitle', { id: 'engine' }),
+        description: t('updates.importDone'),
+        tone: 'success',
+      })
+    })
+  }, [api, push, refresh, t, withBusy])
+
   const updateSettings = useCallback(
     async (patch: Partial<AppSettings>, opts?: { quiet?: boolean }) => {
       await withBusy('settings', async () => {
@@ -460,6 +474,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     return api.getRecentErrors()
   }, [api])
 
+  const getBugReportBundle = useCallback(async () => {
+    return api.getBugReportBundle()
+  }, [api])
+
   const value = useMemo<AppStateContextValue>(
     () => ({
       loading,
@@ -476,9 +494,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       checkAllServices,
       checkUpdates,
       updateChannel,
+      importEnginePack,
       updatesLive,
       updateSettings,
       getRecentErrors,
+      getBugReportBundle,
       openBugReport,
       busy,
     }),
@@ -497,9 +517,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       checkAllServices,
       checkUpdates,
       updateChannel,
+      importEnginePack,
       updatesLive,
       updateSettings,
       getRecentErrors,
+      getBugReportBundle,
       openBugReport,
       busy,
     ],

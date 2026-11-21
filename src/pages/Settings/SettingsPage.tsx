@@ -152,6 +152,38 @@ export function SettingsPage() {
             />
           </SettingsRow>
           <SettingsRow
+            title={t('settings.restoreOnLogin')}
+            hint={t('settings.restoreOnLoginHint')}
+          >
+            <Toggle
+              checked={settings.restoreBypassOnLogin ?? true}
+              disabled={disabled}
+              onChange={(checked) => void updateSettings({ restoreBypassOnLogin: checked })}
+            />
+          </SettingsRow>
+          <SettingsRow
+            title={t('settings.restoreOnResume')}
+            hint={t('settings.restoreOnResumeHint')}
+          >
+            <Toggle
+              checked={settings.restoreBypassOnResume ?? true}
+              disabled={disabled}
+              onChange={(checked) => void updateSettings({ restoreBypassOnResume: checked })}
+            />
+          </SettingsRow>
+          <SettingsRow
+            title={t('settings.restoreOnNetwork')}
+            hint={t('settings.restoreOnNetworkHint')}
+          >
+            <Toggle
+              checked={settings.restoreBypassOnNetworkChange ?? true}
+              disabled={disabled}
+              onChange={(checked) =>
+                void updateSettings({ restoreBypassOnNetworkChange: checked })
+              }
+            />
+          </SettingsRow>
+          <SettingsRow
             title={t('settings.minimizeToTray')}
             hint={t('settings.minimizeToTrayHint')}
           >

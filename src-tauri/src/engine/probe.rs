@@ -37,13 +37,15 @@ pub struct DiagTarget {
     pub port: u16,
     /// When true, run HTTPS (skip redundant TCP:443).
     pub https: bool,
+    /// Soft UDP/QUIC smoke on `port` (usually 443) — never gates pass/fail alone.
+    pub quic: bool,
     /// Soft hosts affect the score but cannot alone fail the service.
     pub critical: bool,
 }
 
 /// Critical + soft endpoints used by Smart Check.
 /// Discord needs gateway + `discord.media` on Flowseal alt ports (2053…).
-/// Soft hosts refine ranking (CDN / images) without alone failing a service.
+/// Soft hosts refine ranking (CDN / images / QUIC / STUN) without alone failing a service.
 pub fn diag_targets() -> Vec<DiagTarget> {
     vec![
         DiagTarget {
@@ -51,6 +53,7 @@ pub fn diag_targets() -> Vec<DiagTarget> {
             host: "youtube.com",
             port: 443,
             https: true,
+            quic: false,
             critical: true,
         },
         DiagTarget {
@@ -58,6 +61,7 @@ pub fn diag_targets() -> Vec<DiagTarget> {
             host: "www.youtube.com",
             port: 443,
             https: true,
+            quic: false,
             critical: true,
         },
         // Soft: image CDN often blocked when main site still opens.
@@ -66,6 +70,34 @@ pub fn diag_targets() -> Vec<DiagTarget> {
             host: "i.ytimg.com",
             port: 443,
             https: true,
+            quic: false,
+            critical: false,
+        },
+        // Soft: player/API edge — closer to real playback than apex alone.
+        DiagTarget {
+            service: "youtube",
+            host: "youtubei.googleapis.com",
+            port: 443,
+            https: true,
+            quic: false,
+            critical: false,
+        },
+        // Soft: media CDN — often blocked when www still opens (playback stall).
+        DiagTarget {
+            service: "youtube",
+            host: "googlevideo.com",
+            port: 443,
+            https: true,
+            quic: false,
+            critical: false,
+        },
+        // Soft QUIC/UDP:443 — HTTP3 path used by many YT clients.
+        DiagTarget {
+            service: "youtube",
+            host: "www.youtube.com",
+            port: 443,
+            https: false,
+            quic: true,
             critical: false,
         },
         DiagTarget {
@@ -73,6 +105,7 @@ pub fn diag_targets() -> Vec<DiagTarget> {
             host: "discord.com",
             port: 443,
             https: true,
+            quic: false,
             critical: true,
         },
         DiagTarget {
@@ -80,6 +113,7 @@ pub fn diag_targets() -> Vec<DiagTarget> {
             host: "gateway.discord.gg",
             port: 443,
             https: true,
+            quic: false,
             critical: true,
         },
         // Matches `--hostlist-domains=discord.media --filter-tcp=2053,...` in Flowseal bats.
@@ -88,6 +122,7 @@ pub fn diag_targets() -> Vec<DiagTarget> {
             host: "discord.media",
             port: 2053,
             https: false,
+            quic: false,
             critical: true,
         },
         DiagTarget {
@@ -95,6 +130,7 @@ pub fn diag_targets() -> Vec<DiagTarget> {
             host: "cdn.discordapp.com",
             port: 443,
             https: true,
+            quic: false,
             critical: false,
         },
         // Soft STUN/UDP smoke — voice can fail while HTTPS looks fine.
@@ -103,6 +139,16 @@ pub fn diag_targets() -> Vec<DiagTarget> {
             host: "stun.cloudflare.com",
             port: 3478,
             https: false,
+            quic: false,
+            critical: false,
+        },
+        // Soft QUIC/UDP:443 for Discord web/client.
+        DiagTarget {
+            service: "discord",
+            host: "discord.com",
+            port: 443,
+            https: false,
+            quic: true,
             critical: false,
         },
     ]
@@ -260,6 +306,76 @@ fn probe_tcp_addrs_abortable(
         note: "TCP connect failed".into(),
         protocol: "tcp",
         weight: 1,
+    }
+}
+
+/// Soft QUIC/HTTP3 smoke: send a minimal UDP datagram to :443 and accept any reply.
+/// Not a full QUIC handshake — only detects wholesale UDP/443 blackholes.
+fn probe_udp_quic(host: &str, port: u16, pre: &[SocketAddr], timeout: Duration) -> ProbeResult {
+    use std::net::UdpSocket;
+
+    let start = Instant::now();
+    let resolved: Vec<SocketAddr> = if !pre.is_empty() {
+        prefer_ipv4(pre.iter().map(|a| SocketAddr::new(a.ip(), port)))
+    } else {
+        resolve_host_timed(host, port, timeout.min(Duration::from_millis(1200)))
+    };
+    if resolved.is_empty() {
+        return ProbeResult {
+            ok: false,
+            latency_ms: None,
+            note: "QUIC DNS failed".into(),
+            protocol: "quic",
+            weight: 2,
+        };
+    }
+
+    let Ok(sock) = UdpSocket::bind("0.0.0.0:0") else {
+        return ProbeResult {
+            ok: false,
+            latency_ms: None,
+            note: "QUIC bind failed".into(),
+            protocol: "quic",
+            weight: 2,
+        };
+    };
+    let slice = timeout.min(Duration::from_millis(600));
+    let _ = sock.set_read_timeout(Some(slice));
+    let _ = sock.set_write_timeout(Some(slice));
+
+    // Long enough to look unlike a tiny probe to some middleboxes; content is opaque.
+    let mut req = [0u8; 64];
+    req[0] = 0xc0; // QUIC long-header-ish high bits
+    for (i, b) in req[1..].iter_mut().enumerate() {
+        *b = (0x5a ^ (i as u8)).wrapping_add(start.elapsed().as_nanos() as u8);
+    }
+
+    for addr in &resolved {
+        if sock.send_to(&req, addr).is_err() {
+            continue;
+        }
+        let mut buf = [0u8; 256];
+        match sock.recv_from(&mut buf) {
+            Ok((n, _)) if n > 0 => {
+                let ms = start.elapsed().as_millis().min(u32::MAX as u128) as u32;
+                return ProbeResult {
+                    ok: true,
+                    latency_ms: Some(ms),
+                    note: "QUIC/UDP reply".into(),
+                    protocol: "quic",
+                    weight: 2,
+                };
+            }
+            _ => continue,
+        }
+    }
+
+    ProbeResult {
+        ok: false,
+        latency_ms: None,
+        note: "QUIC/UDP no reply (HTTP3 may fail)".into(),
+        protocol: "quic",
+        weight: 2,
     }
 }
 
@@ -520,6 +636,11 @@ fn probe_matrix_resolved(
     let target = &resolved.target;
     let addrs = &resolved.addrs;
 
+    if target.quic {
+        let udp_budget = timeout.min(Duration::from_millis(700));
+        return vec![probe_udp_quic(target.host, target.port, addrs, udp_budget)];
+    }
+
     if !target.https {
         // Soft STUN/UDP path (voice hint).
         if target.port == 3478 {
@@ -614,6 +735,7 @@ pub fn probe_resolved_parallel(
                             host: "unknown",
                             port: 443,
                             https: true,
+                            quic: false,
                             critical: true,
                         },
                         Vec::new(),
@@ -914,6 +1036,7 @@ mod tests {
             host: "youtube.com",
             port: 443,
             https: true,
+            quic: false,
             critical: true,
         };
         let yt_cdn = DiagTarget {
@@ -921,6 +1044,7 @@ mod tests {
             host: "i.ytimg.com",
             port: 443,
             https: true,
+            quic: false,
             critical: false,
         };
         let disc = DiagTarget {
@@ -928,6 +1052,7 @@ mod tests {
             host: "discord.com",
             port: 443,
             https: true,
+            quic: false,
             critical: true,
         };
 

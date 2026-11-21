@@ -41,8 +41,10 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
             "toggle" => {
                 if let Some(state) = app.try_state::<AppState>() {
                     let running = matches!(state.engine.status(), EngineStatus::Running);
-                    match state.engine.set_running(!running) {
+                    let next = !running;
+                    match state.engine.set_running(next) {
                         Ok(_) => {
+                            state.remember_bypass_desired(next);
                             state.history.push(
                                 "engine",
                                 if running {
@@ -59,6 +61,8 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
             }
             "quit" => {
                 if let Some(state) = app.try_state::<AppState>() {
+                    // Explicit Quit: do not auto-restore on next login.
+                    state.clear_bypass_desired();
                     state.engine.shutdown_for_exit();
                 }
                 app.exit(0);

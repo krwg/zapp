@@ -12,6 +12,7 @@ import type {
   ThemeMode,
   UpdateChannel,
 } from '@/types'
+import type { BugReportBundle } from '@/types/bugReport'
 
 export type HappZapretApi = ZappApi
 
@@ -33,4 +34,6 @@ export interface ZappApi {
   setTheme(mode: ThemeMode): Promise<ThemeMode>
   openExternalUrl(url: string): Promise<void>
   getRecentErrors(): Promise<string[]>
+  getBugReportBundle(): Promise<BugReportBundle>
+  importEnginePack(): Promise<UpdateChannel>
 }

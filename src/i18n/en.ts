@@ -141,6 +141,9 @@ export const en = {
     reportSend: 'Submit on GitHub',
     reportHint:
       "We'll open GitHub with your report mostly filled in. Sign in and submit — zapp never sends passwords or personal data.",
+    reportDiagTitle: 'Diagnostics (auto)',
+    reportDiagHint:
+      'Versions, engine path, recent errors and log — attached for the developer. No need to edit.',
   },
   smartCheck: {
     title: 'Smart check',
@@ -229,6 +232,8 @@ export const en = {
     title: 'Updates',
     description: 'Keep the app and bypass pack current — independently of each other.',
     check: 'Check for updates',
+    importZip: 'Import zip',
+    importDone: 'Engine pack installed from a local archive.',
     modelTitle: 'How updates work',
     modelBody:
       'The app updates from GitHub krwg/zapp. The bypass pack updates from Flowseal releases. With Auto-check / Auto-install on, this happens at startup.',
@@ -266,6 +271,15 @@ export const en = {
     startupDesc: 'What happens when Windows starts.',
     launchAtStartup: 'Launch at startup',
     launchAtStartupHint: 'Open zapp with Windows.',
+    restoreOnLogin: 'Restore bypass after login',
+    restoreOnLoginHint:
+      'If bypass was on, start it again after you sign in to Windows (requires launch at startup).',
+    restoreOnResume: 'Restore bypass after sleep',
+    restoreOnResumeHint:
+      'If bypass was on, start it again after sleep or hibernate.',
+    restoreOnNetwork: 'Restore bypass on network change',
+    restoreOnNetworkHint:
+      'If bypass was on, start it again when Wi‑Fi or the default gateway changes.',
     minimizeToTray: 'Minimize to tray',
     minimizeToTrayHint: 'Hide the window to the tray instead of closing.',
     updates: 'Updates',
@@ -381,7 +395,7 @@ export const en = {
     smartCheckLabel: 'How the check runs',
     smartCheckTitle: 'Smart check flow',
     smartCheckBody:
-      'Modes are tested one by one against several YouTube and Discord endpoints (site, gateway, media, images). The score weighs critical reachability, soft CDN checks, and latency. Fast mode stops on a strong pass; Thorough compares nearly all modes.',
+      'Modes are tested one by one against several YouTube and Discord endpoints (site, gateway, media, CDN, API, QUIC/UDP). The score weighs critical reachability, soft checks, and latency. Fast mode stops on a strong pass; Thorough compares nearly all modes.',
     resultsLabel: 'How to read the ranking',
     resultsTitle: 'Check results',
     resultsBody:

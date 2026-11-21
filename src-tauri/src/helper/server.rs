@@ -3,13 +3,14 @@
 // ╚════════════════════════════════════════════════════╝
 
 use std::io::{BufRead, BufReader, Write};
-use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
+
+use interprocess::local_socket::{prelude::*, ListenerOptions};
 
 use crate::engine::kill_orphan_winws;
 
@@ -18,7 +19,7 @@ use super::paths::{
     program_data_zapp_root, validate_winws_paths_any,
 };
 use super::protocol::{HelperRequest, HelperResponse, HelperStatus};
-use super::{helper_state_dir, token_path, HELPER_PORT};
+use super::{helper_pipe_name, helper_state_dir, token_path, HELPER_PIPE};
 use std::path::{Path, PathBuf};
 
 #[cfg(windows)]
@@ -35,16 +36,17 @@ pub fn serve() -> Result<(), String> {
     std::fs::create_dir_all(&state_dir).ok();
     let token = read_token()?;
 
-    let listener = TcpListener::bind(("127.0.0.1", HELPER_PORT)).map_err(|e| {
-        format!(
-            "bind helper port {HELPER_PORT}: {e} (another helper may still be running)"
-        )
-    })?;
-    listener
-        .set_nonblocking(false)
-        .map_err(|e| e.to_string())?;
+    let name = helper_pipe_name()?;
+    let listener = ListenerOptions::new()
+        .name(name)
+        .create_sync()
+        .map_err(|e| {
+            format!(
+                "bind helper pipe '{HELPER_PIPE}': {e} (another helper may still be running)"
+            )
+        })?;
 
-    eprintln!("zapp helper listening on 127.0.0.1:{HELPER_PORT}");
+    eprintln!("zapp helper listening on named pipe '{HELPER_PIPE}'");
 
     let runtime = Mutex::new(Runtime {
         child: None,
@@ -54,10 +56,7 @@ pub fn serve() -> Result<(), String> {
 
     for conn in listener.incoming() {
         let Ok(mut stream) = conn else { continue };
-        // One hung client without a newline must not freeze the elevated helper forever.
-        let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
-        let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
-        let mut reader = BufReader::new(stream.try_clone().map_err(|e| e.to_string())?);
+        let mut reader = BufReader::new(&mut stream);
         let mut line = String::new();
         if reader.read_line(&mut line).is_err() {
             continue;

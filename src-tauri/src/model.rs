@@ -228,6 +228,15 @@ pub struct AppSettings {
     pub appearance: ThemeMode,
     pub start_with_system: bool,
     pub minimize_to_tray: bool,
+    /// After Windows logon (app autostart), re-enable bypass if it was on.
+    #[serde(default = "default_true")]
+    pub restore_bypass_on_login: bool,
+    /// After sleep/hibernate, re-enable bypass if it was on.
+    #[serde(default = "default_true")]
+    pub restore_bypass_on_resume: bool,
+    /// When default gateway / Wi‑Fi SSID changes, try to keep bypass up.
+    #[serde(default = "default_true")]
+    pub restore_bypass_on_network_change: bool,
     pub auto_check_updates: bool,
     pub auto_install_updates: bool,
     pub auto_diagnostics: bool,
@@ -238,6 +247,10 @@ pub struct AppSettings {
     pub advanced_logging: bool,
     pub engine_path: Option<String>,
     pub strategies_path: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -271,6 +284,9 @@ pub struct SettingsPatch {
     pub appearance: Option<ThemeMode>,
     pub start_with_system: Option<bool>,
     pub minimize_to_tray: Option<bool>,
+    pub restore_bypass_on_login: Option<bool>,
+    pub restore_bypass_on_resume: Option<bool>,
+    pub restore_bypass_on_network_change: Option<bool>,
     pub auto_check_updates: Option<bool>,
     pub auto_install_updates: Option<bool>,
     pub auto_diagnostics: Option<bool>,

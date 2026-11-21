@@ -35,7 +35,7 @@ Windows 10/11 x64. Права администратора нужны один �
 
 ## Что происходит на вашей машине
 
-`winws` использует [WinDivert](https://reqrypt.org/windivert.html), а он загружает драйвер ядра, поэтому нужны права администратора. zapp запускает один повышенный helper, `zapp-helper.exe`, и общается с ним через TCP-порт на `127.0.0.1` с токеном. Из сети он недоступен.
+`winws` использует [WinDivert](https://reqrypt.org/windivert.html), а он загружает драйвер ядра, поэтому нужны права администратора. zapp запускает один повышенный helper, `zapp-helper.exe`, и общается с ним через named pipe (`\\.\pipe\zapp-helper`) с токеном. TCP-порт не слушается — только локальная машина.
 
 При первом запуске и при обновлении Engine или Strategies zapp скачивает пакет Flowseal с GitHub. Новые установки предпочитают `%ProgramData%\zapp\engine\` (elevated helper + ACL); запасной вариант — `%APPDATA%\app.zapp.desktop\engine\`. Обновления приложения идут из [krwg/zapp](https://github.com/krwg/zapp/releases). Кроме проверок релизов на GitHub и проб сайтов, которые вы запускаете сами, других запросов zapp не делает. Телеметрии нет. Настройки и логи — в `%APPDATA%\app.zapp.desktop\`, состояние helper — в `%LOCALAPPDATA%\zapp\`.
 

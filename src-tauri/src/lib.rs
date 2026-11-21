@@ -9,9 +9,13 @@ mod error;
 pub mod helper;
 mod history;
 mod model;
+mod network;
+mod persist;
 mod state;
 mod tray;
 mod util;
+#[cfg(windows)]
+mod win32;
 
 use state::AppState;
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
@@ -24,6 +28,9 @@ fn launched_minimized() -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(windows)]
+    win32::maybe_attach_console();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             tray::show_main_window(app);
@@ -122,6 +129,8 @@ pub fn run() {
                         Ok(false) => log::info!("Flowseal engine pack OK"),
                         Err(e) => log::warn!("engine bootstrap failed: {e}"),
                     }
+                    // Roadmap §5: restore bypass after login once pack is ready.
+                    let _ = state.try_restore_bypass("login");
                 });
             }
 
@@ -148,6 +157,73 @@ pub fn run() {
                 });
             }
 
+            // §5 resume (wall-clock gap) + §7 network memory (gateway/SSID change).
+            {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    use std::time::{Duration, SystemTime};
+                    let mut last = SystemTime::now();
+                    let mut last_net = crate::network::current_fingerprint().key();
+                    {
+                        if let Some(state) = handle.try_state::<AppState>() {
+                            let mut session =
+                                crate::persist::load_session(state.engine.app_data());
+                            if session.network_key.is_none() {
+                                session.network_key = Some(last_net.clone());
+                                crate::persist::save_session(state.engine.app_data(), &session);
+                            } else if let Some(prev) = session.network_key.clone() {
+                                last_net = prev;
+                            }
+                        }
+                    }
+                    loop {
+                        std::thread::sleep(Duration::from_secs(5));
+                        let now = SystemTime::now();
+                        let gap = now.duration_since(last).unwrap_or_default();
+                        last = now;
+                        let Some(state) = handle.try_state::<AppState>() else {
+                            continue;
+                        };
+
+                        // Poll is frozen during sleep; a large wall gap means resume.
+                        if gap > Duration::from_secs(25) {
+                            std::thread::sleep(Duration::from_secs(2));
+                            let _ = state.try_restore_bypass("resume");
+                            let _ = handle.emit("engine:restored", ());
+                        }
+
+                        let fp = crate::network::current_fingerprint();
+                        let key = fp.key();
+                        if key != last_net && fp.gateway.is_some() {
+                            log::info!(
+                                "network changed: {} -> {} (ssid={:?})",
+                                last_net,
+                                key,
+                                fp.ssid
+                            );
+                            state.history.push(
+                                "network",
+                                format!(
+                                    "Network changed (gw={}, ssid={})",
+                                    fp.gateway.as_deref().unwrap_or("-"),
+                                    fp.ssid.as_deref().unwrap_or("-")
+                                ),
+                            );
+                            let mut session =
+                                crate::persist::load_session(state.engine.app_data());
+                            session.network_key = Some(key.clone());
+                            crate::persist::save_session(state.engine.app_data(), &session);
+                            last_net = key;
+                            std::thread::sleep(Duration::from_secs(2));
+                            if state.try_restore_bypass("network") {
+                                let _ = handle.emit("engine:restored", ());
+                            }
+                            let _ = handle.emit("network:changed", ());
+                        }
+                    }
+                });
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -169,6 +245,8 @@ pub fn run() {
             commands::reset_engine,
             commands::open_external_url,
             commands::get_recent_errors,
+            commands::get_bug_report_bundle,
+            commands::import_engine_pack,
         ])
         .build(tauri::generate_context!())
         .expect("error while building zapp")

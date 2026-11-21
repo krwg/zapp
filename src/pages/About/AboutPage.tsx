@@ -12,15 +12,21 @@ import { useAppState } from '@/context/AppStateContext'
 import { useLocale } from '@/context/LocaleContext'
 import { useUiPrefs } from '@/context/UiPrefsContext'
 import shieldMark from '@/assets/brand/shield-128.png'
-import type { AboutLocationState, BugReportPrefill } from '@/types/bugReport'
+import type {
+  AboutLocationState,
+  BugReportBundle,
+  BugReportPrefill,
+} from '@/types/bugReport'
 import { formatVersion } from '@/utils/version'
 import styles from './AboutPage.module.css'
 
 const AUTHOR_URL = 'https://krwg.github.io/krwg/'
 const YEAR = 2026
+/** Keep under common browser / GitHub URL length limits. */
+const MAX_ISSUE_BODY = 6500
 
 export function AboutPage() {
-  const { snapshot, getRecentErrors } = useAppState()
+  const { snapshot, getBugReportBundle } = useAppState()
   const { t } = useLocale()
   const location = useLocation()
   const navigate = useNavigate()
@@ -35,7 +41,7 @@ export function AboutPage() {
     smart: false,
     updates: false,
   })
-  const [recentErrors, setRecentErrors] = useState<string[]>([])
+  const [bundle, setBundle] = useState<BugReportBundle | null>(null)
 
   useEffect(() => {
     if (!bugReportHintSeen) {
@@ -60,12 +66,25 @@ export function AboutPage() {
 
   const openReport = async (prefill?: BugReportPrefill) => {
     applyPrefill(prefill)
-    try {
-      setRecentErrors(await getRecentErrors())
-    } catch {
-      setRecentErrors([])
-    }
     setReportOpen(true)
+    try {
+      setBundle(await getBugReportBundle())
+    } catch (err) {
+      console.warn('getBugReportBundle failed', err)
+      // Fallback so the dialog is never empty if ACL/IPC glitches.
+      setBundle({
+        appVersion: snapshot?.system.appVersion ?? '?',
+        engineVersion: snapshot?.system.engineVersion ?? '?',
+        engineRoot: snapshot?.settings.enginePath ?? '(unknown)',
+        engineInstalled: true,
+        elevated: snapshot?.system.elevated ?? false,
+        diagnosticsMode: String(snapshot?.settings.diagnosticsMode ?? '?'),
+        bypassDesired: false,
+        activeStrategy: null,
+        recentErrors: [String(prefill?.actual ?? '(bundle unavailable)')],
+        recentLog: [],
+      })
+    }
   }
 
   useEffect(() => {
@@ -81,7 +100,7 @@ export function AboutPage() {
 
   const { about, system, settings } = snapshot
 
-  const buildIssue = () => {
+  const buildIssueBody = (diag: BugReportBundle | null) => {
     const areaList = [
       areas.bypass ? 'Bypass' : null,
       areas.smart ? 'Smart check' : null,
@@ -90,7 +109,33 @@ export function AboutPage() {
       .filter(Boolean)
       .join(', ')
 
-    const body = [
+    const env = diag
+      ? [
+          `- App: ${diag.appVersion}`,
+          `- Engine: ${diag.engineVersion} (installed=${diag.engineInstalled})`,
+          `- Engine root: \`${diag.engineRoot}\``,
+          `- Elevated: ${diag.elevated}`,
+          `- Diagnostics mode: ${diag.diagnosticsMode}`,
+          `- Bypass desired: ${diag.bypassDesired}`,
+          `- Active strategy: ${diag.activeStrategy ?? '(none)'}`,
+          `- OS: Windows`,
+        ]
+      : [
+          `- App: ${system.appVersion}`,
+          `- Engine: ${system.engineVersion}`,
+          `- OS: Windows`,
+          `- Elevated: ${system.elevated}`,
+          `- Diagnostics mode: ${settings.diagnosticsMode}`,
+        ]
+
+    const errors = diag?.recentErrors?.length
+      ? diag.recentErrors.map((e) => `- ${e}`).join('\n')
+      : '- (none)'
+    const log = diag?.recentLog?.length
+      ? ['```', ...diag.recentLog, '```'].join('\n')
+      : '(none)'
+
+    let body = [
       '### Summary',
       summary.trim() || '(none)',
       '',
@@ -107,28 +152,31 @@ export function AboutPage() {
       areaList || '(none)',
       '',
       '### Environment (auto)',
-      `- App: ${system.appVersion}`,
-      `- Engine: ${system.engineVersion}`,
-      `- OS: Windows`,
-      `- Elevated: ${system.elevated}`,
-      `- Diagnostics mode: ${settings.diagnosticsMode}`,
+      ...env,
       '',
-      '### Recent errors (auto, no secrets)',
-      recentErrors.length ? recentErrors.map((e) => `- ${e}`).join('\n') : '- (none)',
+      '### Recent errors (auto)',
+      errors,
+      '',
+      '### Recent log (auto)',
+      log,
       '',
     ].join('\n')
 
+    if (body.length > MAX_ISSUE_BODY) {
+      body = `${body.slice(0, MAX_ISSUE_BODY - 40).trimEnd()}\n\n…(truncated for URL length)\n`
+    }
+    return body
+  }
+
+  const sendReport = async () => {
+    const body = buildIssueBody(bundle)
     const title = summary.trim() || 'Bug report from zapp'
     const params = new URLSearchParams({
       title,
       body,
       labels: 'bug',
     })
-    return `https://github.com/krwg/zapp/issues/new?${params.toString()}`
-  }
-
-  const sendReport = async () => {
-    const url = buildIssue()
+    const url = `https://github.com/krwg/zapp/issues/new?${params.toString()}`
     const { getApi } = await import('@/api/client')
     try {
       await getApi().openExternalUrl(url)
@@ -282,6 +330,31 @@ export function AboutPage() {
               />
               {t('aboutPage.reportAreaUpdates')}
             </label>
+          </div>
+
+          <div className={styles.diag}>
+            <div className={styles.diagTitle}>{t('aboutPage.reportDiagTitle')}</div>
+            <p className={styles.diagHint}>{t('aboutPage.reportDiagHint')}</p>
+            <pre className={styles.diagPre}>
+              {bundle
+                ? [
+                    `App ${bundle.appVersion} · Engine ${bundle.engineVersion}`,
+                    `Root ${bundle.engineRoot}`,
+                    `Elevated ${bundle.elevated} · Mode ${bundle.diagnosticsMode}`,
+                    `Bypass desired ${bundle.bypassDesired} · Strategy ${bundle.activeStrategy ?? '—'}`,
+                    '',
+                    'Errors:',
+                    ...(bundle.recentErrors.length
+                      ? bundle.recentErrors.slice(0, 6)
+                      : ['(none)']),
+                    '',
+                    'Log:',
+                    ...(bundle.recentLog.length
+                      ? bundle.recentLog.slice(0, 10)
+                      : ['(none)']),
+                  ].join('\n')
+                : '…'}
+            </pre>
           </div>
         </div>
       </Dialog>

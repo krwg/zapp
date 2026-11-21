@@ -58,6 +58,29 @@ function listItem(line: string): { ordered: boolean; text: string } | null {
   return null
 }
 
+/** GFM table separator: `| --- | :---: | ---: |` */
+function isTableSeparator(line: string): boolean {
+  const t = line.trim()
+  if (!t.includes('-') || !t.includes('|')) return false
+  return /^\|?(\s*:?-+:?\s*\|)+\s*:?-+:?\s*\|?\s*$/.test(t)
+}
+
+function isTableRow(line: string): boolean {
+  const t = line.trim()
+  if (!t.includes('|')) return false
+  if (isTableSeparator(t)) return false
+  // At least one pipe that separates cells (not a lone leading/trailing edge).
+  const cells = splitTableRow(t)
+  return cells.length >= 2
+}
+
+function splitTableRow(line: string): string[] {
+  let t = line.trim()
+  if (t.startsWith('|')) t = t.slice(1)
+  if (t.endsWith('|')) t = t.slice(0, -1)
+  return t.split('|').map((c) => c.trim())
+}
+
 export function Markdown({ source, compact }: MarkdownProps) {
   const raw = source.replace(/\r\n/g, '\n')
   const lines = raw.split('\n')
@@ -169,6 +192,47 @@ export function Markdown({ source, compact }: MarkdownProps) {
       continue
     }
 
+    // GFM tables: header + separator + body rows
+    if (
+      isTableRow(trimmed) &&
+      i + 1 < lines.length &&
+      isTableSeparator(lines[i + 1].trim())
+    ) {
+      const header = splitTableRow(trimmed)
+      i += 2 // skip header + separator
+      const body: string[][] = []
+      while (i < lines.length) {
+        const t = lines[i].trim()
+        if (!t || !isTableRow(t)) break
+        body.push(splitTableRow(t))
+        i += 1
+      }
+      const cols = header.length
+      nodes.push(
+        <div key={key++} className={styles.tableWrap}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                {header.map((cell, idx) => (
+                  <th key={idx}>{inline(cell)}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {body.map((row, rIdx) => (
+                <tr key={rIdx}>
+                  {Array.from({ length: cols }, (_, cIdx) => (
+                    <td key={cIdx}>{inline(row[cIdx] ?? '')}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>,
+      )
+      continue
+    }
+
     // Paragraph (merge soft-wrapped consecutive non-special lines)
     const para: string[] = [trimmed]
     i += 1
@@ -180,7 +244,10 @@ export function Markdown({ source, compact }: MarkdownProps) {
         listItem(t) ||
         t.startsWith('>') ||
         t.startsWith('```') ||
-        /^(-{3,}|\*{3,}|_{3,})$/.test(t)
+        /^(-{3,}|\*{3,}|_{3,})$/.test(t) ||
+        (isTableRow(t) &&
+          i + 1 < lines.length &&
+          isTableSeparator(lines[i + 1].trim()))
       ) {
         break
       }

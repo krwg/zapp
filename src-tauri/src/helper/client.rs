@@ -4,7 +4,6 @@
 
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
-use std::net::TcpStream;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -12,10 +11,11 @@ use std::time::{Duration, Instant};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
+use interprocess::local_socket::{prelude::*, Stream as LocalStream};
 use uuid::Uuid;
 
 use super::protocol::{HelperRequest, HelperResponse, HelperStatus};
-use super::{helper_exe_path, helper_state_dir, token_path, HELPER_FLAG, HELPER_PORT};
+use super::{helper_exe_path, helper_pipe_name, helper_state_dir, token_path, HELPER_FLAG};
 use crate::engine::{EngineFault, FaultCode};
 
 #[cfg(windows)]
@@ -43,17 +43,26 @@ fn ensure_token(_app_data: &Path) -> Result<String, EngineFault> {
 fn harden_token_acl(path: &Path) {
     #[cfg(windows)]
     {
-        // Restrict helper.token to the current user (+ SYSTEM). Not a full security
-        // boundary for same-user processes, but blocks casual world-readable tokens.
-        let path_s = path.to_string_lossy().replace('\'', "''");
-        let script = format!(
-            "$p = '{path_s}'; \
-             icacls $p /inheritance:r | Out-Null; \
-             icacls $p /grant:r \"$env:USERNAME:(R)\" | Out-Null; \
-             icacls $p /grant:r \"SYSTEM:(F)\" | Out-Null"
-        );
-        let _ = Command::new("powershell")
-            .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
+        // Restrict helper.token to the current user (+ SYSTEM) via icacls (no PowerShell).
+        let path_s = path.to_string_lossy();
+        let user = std::env::var("USERNAME").unwrap_or_else(|_| "Users".into());
+        let grant_user = format!("{user}:(R)");
+        let _ = Command::new("icacls")
+            .args([path_s.as_ref(), "/inheritance:r"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+        let _ = Command::new("icacls")
+            .args([path_s.as_ref(), "/grant:r", &grant_user])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+        let _ = Command::new("icacls")
+            .args([path_s.as_ref(), "/grant:r", "SYSTEM:(F)"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -66,24 +75,30 @@ fn harden_token_acl(path: &Path) {
     }
 }
 
+fn connect_helper() -> Result<LocalStream, EngineFault> {
+    let name = helper_pipe_name().map_err(|e| EngineFault::new(FaultCode::Unknown, e))?;
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        match LocalStream::connect(name.clone()) {
+            Ok(s) => return Ok(s),
+            Err(e) => {
+                if Instant::now() >= deadline {
+                    return Err(EngineFault::new(
+                        FaultCode::UacLaunchFailed,
+                        format!("helper not reachable: {e}"),
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+}
+
 fn request_with_timeout(
     req: &HelperRequest,
-    read_timeout: Duration,
+    _read_timeout: Duration,
 ) -> Result<HelperResponse, EngineFault> {
-    let mut stream = TcpStream::connect_timeout(
-        &std::net::SocketAddr::from(([127, 0, 0, 1], HELPER_PORT)),
-        Duration::from_secs(3),
-    )
-    .map_err(|e| {
-        EngineFault::new(
-            FaultCode::UacLaunchFailed,
-            format!("helper not reachable: {e}"),
-        )
-    })?;
-    stream.set_read_timeout(Some(read_timeout)).ok();
-    stream
-        .set_write_timeout(Some(Duration::from_secs(10)))
-        .ok();
+    let mut stream = connect_helper()?;
 
     let payload = serde_json::to_string(req)
         .map_err(|e| EngineFault::new(FaultCode::Unknown, e.to_string()))?;
@@ -124,22 +139,9 @@ fn helper_auth_ok(token: &str) -> Result<bool, EngineFault> {
 fn kill_stale_helper() {
     #[cfg(windows)]
     {
-        // Only kill zapp-helper / our staged binary — never an unrelated owner of :39221.
-        let script = format!(
-            "$conns = Get-NetTCPConnection -LocalPort {HELPER_PORT} -ErrorAction SilentlyContinue; \
-             foreach ($c in $conns) {{ \
-               $procId = $c.OwningProcess; \
-               if (-not $procId -or $procId -eq 0) {{ continue }} \
-               $p = Get-Process -Id $procId -ErrorAction SilentlyContinue; \
-               if ($null -eq $p) {{ continue }} \
-               $name = $p.ProcessName; \
-               if ($name -eq 'zapp-helper' -or $name -eq 'zapp') {{ \
-                 Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue \
-               }} \
-             }}"
-        );
-        let _ = Command::new("powershell")
-            .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
+        // Named-pipe helper: stop only the staged elevated binary, never the UI `zapp.exe`.
+        let _ = Command::new("taskkill")
+            .args(["/F", "/IM", "zapp-helper.exe", "/T"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -260,52 +262,16 @@ fn spawn_helper_elevated(app_data: &Path) -> Result<(), EngineFault> {
             )
         })?;
 
-        let exe_s = helper_bin.to_string_lossy().replace('\'', "''");
-        let work_s = dir.to_string_lossy().replace('\'', "''");
-
-        let script = format!(
-            "$ErrorActionPreference='Stop'; try {{ \
-                Start-Process -FilePath '{exe}' -ArgumentList '{flag}' \
-                    -WorkingDirectory '{work}' \
-                    -Verb RunAs -WindowStyle Hidden; \
-                exit 0 \
-             }} catch {{ \
-                if ($_.Exception.Message -match 'canceled|cancelled|1223') {{ exit 1223 }}; \
-                Write-Error $_; exit 1 \
-             }}",
-            exe = exe_s,
-            work = work_s,
-            flag = HELPER_FLAG,
-        );
-
-        let output = Command::new("powershell")
-            .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-            .map_err(|e| EngineFault::new(FaultCode::UacLaunchFailed, e.to_string()))?;
-
-        let code = output.status.code().unwrap_or(1);
-        if code == 0 {
-            return Ok(());
-        }
-        if code == 1223 {
-            return Err(EngineFault::new(
+        match crate::win32::shell_execute_runas(&helper_bin, HELPER_FLAG, &dir) {
+            Ok(()) => Ok(()),
+            Err(crate::win32::ElevateError::Cancelled) => Err(EngineFault::new(
                 FaultCode::UacCancelled,
                 "User declined the UAC prompt for zapp helper",
-            ));
+            )),
+            Err(crate::win32::ElevateError::Failed(msg)) => {
+                Err(EngineFault::new(FaultCode::UacLaunchFailed, msg))
+            }
         }
-        let err = String::from_utf8_lossy(&output.stderr);
-        Err(EngineFault::new(
-            FaultCode::UacLaunchFailed,
-            if err.trim().is_empty() {
-                format!("failed to elevate helper (exit {code})")
-            } else {
-                err.trim().to_string()
-            },
-        ))
     }
 
     #[cfg(not(windows))]

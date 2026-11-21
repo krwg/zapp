@@ -13,6 +13,7 @@ import type {
   ThemeMode,
   UpdateChannel,
 } from '@/types'
+import type { BugReportBundle } from '@/types/bugReport'
 import type { ZappApi } from './types'
 
 export function createTauriApi(): ZappApi {
@@ -39,6 +40,9 @@ export function createTauriApi(): ZappApi {
     setTheme: (mode) => invoke<ThemeMode>('set_theme', { mode }),
     openExternalUrl: (url) => invoke<void>('open_external_url', { url }),
     getRecentErrors: () => invoke<string[]>('get_recent_errors'),
+    getBugReportBundle: () => invoke<BugReportBundle>('get_bug_report_bundle'),
+    importEnginePack: () =>
+      invoke<UpdateChannel>('import_engine_pack'),
   }
 }
 
