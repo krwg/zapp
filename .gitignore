@@ -34,6 +34,12 @@ helper.token
 **/last_start_req.json
 **/zapp-helper.exe
 
+# Tauri updater private key (pubkey lives in tauri.conf.json)
+keys/*.key
+keys/generate.log
+!keys/*.key.pub
+!keys/README.md
+
 # engine packs & native binaries (downloaded / local only)
 vendor/**
 !vendor/.gitkeep
@@ -74,4 +80,5 @@ Desktop.ini
 
 # local release copies (GitHub Releases is the source of truth)
 dist-release/
+out-updater-qa/
 

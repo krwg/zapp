@@ -1,0 +1,168 @@
+# Build Windows NSIS/MSI → optional SignPath Authenticode → Tauri .sig + latest.json.
+#
+# Repo secrets:
+#   TAURI_SIGNING_PRIVATE_KEY          (key contents — required for updater artifacts)
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+#   SIGNPATH_API_TOKEN                 (optional until SignPath Foundation is approved)
+#   SIGNPATH_ORGANIZATION_ID
+#   SIGNPATH_PROJECT_SLUG
+#   SIGNPATH_SIGNING_POLICY_SLUG
+
+name: Release Windows
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.2.7) when dispatching manually"
+        required: false
+        default: ""
+      skip_signpath:
+        description: "Skip SignPath even if secrets exist"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      setup_name: ${{ steps.arts.outputs.setup }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Meta
+        id: meta
+        shell: pwsh
+        run: |
+          $ver = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $tag = "${{ github.event.release.tag_name }}"
+          if (-not $tag) { $tag = "${{ github.event.inputs.tag }}" }
+          if (-not $tag) { $tag = "v$ver" }
+          "version=$ver" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+
+      - name: Build (NSIS + MSI + updater artifacts)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        shell: pwsh
+        run: |
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
+            throw "TAURI_SIGNING_PRIVATE_KEY secret is required for release builds (updater .sig)."
+          }
+          # Enable updater artifacts only in CI (keeps local unsigned builds working).
+          npm run tauri build -- --config '{\"bundle\":{\"createUpdaterArtifacts\":true}}'
+
+      - name: Collect artifacts
+        id: arts
+        shell: pwsh
+        run: |
+          $nsis = Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          $msi = Get-ChildItem src-tauri/target/release/bundle/msi/*.msi -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $nsis) { throw "NSIS setup.exe not found" }
+          if (-not (Test-Path "$($nsis.FullName).sig")) {
+            throw "Missing $($nsis.Name).sig — createUpdaterArtifacts / signing key failed"
+          }
+          New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item $nsis.FullName out/
+          Copy-Item "$($nsis.FullName).sig" out/
+          if ($msi) { Copy-Item $msi.FullName out/ }
+          "setup=$($nsis.Name)" >> $env:GITHUB_OUTPUT
+
+      - name: Upload build artifact
+        id: upload-unsigned
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: out/*
+          if-no-files-found: error
+
+      - name: Detect SignPath
+        id: signpath_gate
+        shell: pwsh
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SKIP: ${{ github.event.inputs.skip_signpath }}
+        run: |
+          $enabled = (-not [string]::IsNullOrEmpty($env:SIGNPATH_API_TOKEN)) -and ($env:SKIP -ne 'true')
+          if ($enabled) {
+            "enabled=true" >> $env:GITHUB_OUTPUT
+            Write-Host "SignPath enabled"
+          } else {
+            "enabled=false" >> $env:GITHUB_OUTPUT
+            Write-Host "SignPath skipped"
+          }
+
+      - name: SignPath Authenticode
+        id: signpath
+        if: steps.signpath_gate.outputs.enabled == 'true'
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ secrets.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ secrets.SIGNPATH_SIGNING_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+
+      - name: Re-sign updater .sig after Authenticode
+        if: steps.signpath.outcome == 'success'
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          $exe = Get-ChildItem signed -Filter *-setup.exe -Recurse | Select-Object -First 1
+          if (-not $exe) { throw "Signed setup.exe missing from SignPath output" }
+          # Authenticode changes bytes → regenerate minisign .sig for the plugin updater.
+          npx tauri signer sign `
+            --private-key "$env:TAURI_SIGNING_PRIVATE_KEY" `
+            --password "$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD" `
+            --app-version "${{ steps.meta.outputs.version }}" `
+            $exe.FullName
+          Copy-Item $exe.FullName out/ -Force
+          Copy-Item "$($exe.FullName).sig" out/ -Force
+          $msi = Get-ChildItem signed -Filter *.msi -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($msi) { Copy-Item $msi.FullName out/ -Force }
+
+      - name: Build latest.json
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem out -Filter *-setup.exe | Select-Object -First 1
+          ./scripts/build-latest-json.ps1 `
+            -SetupExe $setup.FullName `
+            -Version "${{ steps.meta.outputs.version }}" `
+            -Tag "${{ steps.meta.outputs.tag }}" `
+            -Out out/latest.json
+
+      - name: Upload to GitHub Release
+        if: github.event_name == 'release' || github.event.inputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.meta.outputs.tag }}"
+          $files = @(Get-ChildItem out -File | ForEach-Object { $_.FullName })
+          if ($files.Count -eq 0) { throw "No files in out/" }
+          gh release upload $tag @files --clobber
