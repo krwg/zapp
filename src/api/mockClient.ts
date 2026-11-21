@@ -116,6 +116,7 @@ export const mockApi: ZappApi = {
       finishedAt: null,
       isDemo: true,
       results: [],
+      pathVerdict: null,
     }
 
     let index = 0
@@ -191,6 +192,26 @@ export const mockApi: ZappApi = {
           state.diagnostics.progress = 100
           state.diagnostics.currentStrategy = null
           state.diagnostics.finishedAt = new Date().toISOString()
+          state.diagnostics.pathVerdict = {
+            youtube: 'available',
+            discordWeb: 'available',
+            discordVoice: 'unavailable',
+          }
+          const best = [...state.diagnostics.results]
+            .filter((r) => r.success)
+            .sort((a, b) => b.score - a.score)[0]
+          if (best) {
+            state.workingModes = [
+              {
+                strategyName: best.name,
+                score: best.score,
+                softScore: best.softScore,
+                networkKey: null,
+                testedAt: best.testedAt,
+              },
+              ...state.workingModes.filter((m) => m.strategyName !== best.name),
+            ].slice(0, 3)
+          }
         }, 700)
         return
       }
@@ -366,7 +387,7 @@ export const mockApi: ZappApi = {
       appVersion: state.system.appVersion,
       engineVersion: state.system.engineVersion,
       engineRoot: 'C:\\mock\\engine\\current',
-      engineInstalled: true,
+      engineInstalled: state.system.engineInstalled,
       elevated: state.system.elevated,
       diagnosticsMode: state.settings.diagnosticsMode,
       bypassDesired: false,
@@ -386,6 +407,35 @@ export const mockApi: ZappApi = {
     ch.status = 'up_to_date'
     ch.releaseNotes = 'Imported from local zip (mock).'
     return clone(ch)
+  },
+
+  async applyWorkingMode(strategyName) {
+    await delay(120)
+    const stem = strategyName.split(' (')[0]?.trim() || strategyName
+    const profile =
+      state.profiles.find((p) => p.name === strategyName) ||
+      state.profiles.find((p) => p.name === stem) ||
+      state.profiles.find((p) => strategyName.includes(p.name) || p.name.includes(stem))
+    if (!profile) throw new Error(`Mode '${strategyName}' not found`)
+    state.profiles = state.profiles.map((p) => ({
+      ...p,
+      isActive: p.id === profile.id,
+    }))
+    state.activeProfile = { ...profile, isActive: true }
+    state.connection.status = 'running'
+    state.connection.strategyName = profile.name
+    state.connection.strategyId = profile.id
+    return clone(state.activeProfile)
+  },
+
+  async resolveConflicts(_killForeignWinws = true) {
+    await delay(100)
+    state.conflicts = null
+    return { images: [], detail: 'No conflicting DPI tools detected' }
+  },
+
+  async getConflicts() {
+    return state.conflicts ? clone(state.conflicts) : null
   },
 }
 

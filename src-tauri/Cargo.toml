@@ -1,6 +1,6 @@
 [package]
 name = "zapp"
-version = "0.2.6"
+version = "0.2.7"
 description = "zapp — desktop client kernel for the zapret engine"
 authors = ["krwg <shevotsukov@icloud.com>"]
 license = "MIT"
@@ -18,6 +18,7 @@ tauri-build = { version = "2", features = [] }
 chrono = { version = "0.4", features = ["serde"] }
 hex = "0.4"
 interprocess = { version = "2.4", default-features = false }
+widestring = "1"
 log = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
@@ -39,6 +40,7 @@ panic = "unwind"
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-autostart = "2"
+tauri-plugin-updater = "2"
 
 [target."cfg(windows)".dependencies]
 rfd = "0.15"

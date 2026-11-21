@@ -2,8 +2,6 @@
 // ║                      win32                       ║
 // ╚════════════════════════════════════════════════════╝
 
-//! Thin Windows helpers — prefer these over PowerShell for elevation / process start.
-
 #![cfg(windows)]
 
 use std::ffi::OsStr;
@@ -20,9 +18,9 @@ use windows_sys::Win32::UI::Shell::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::SW_HIDE;
 
-/// Attach a console for log output.
-/// - always in debug builds
-/// - or when `ZAPP_CONSOLE=1` / `true` / `yes` (release troubleshooting)
+
+
+
 pub fn maybe_attach_console() {
     let want = cfg!(debug_assertions)
         || std::env::var("ZAPP_CONSOLE")
@@ -38,14 +36,14 @@ pub fn maybe_attach_console() {
     }
     unsafe {
         use windows_sys::Win32::System::Console::{AllocConsole, ATTACH_PARENT_PROCESS, AttachConsole};
-        // Prefer parent console (cargo/tauri:dev); otherwise allocate a new window.
+
         if AttachConsole(ATTACH_PARENT_PROCESS) == FALSE {
             let _ = AllocConsole();
         }
     }
 }
 
-/// True when the current process token is elevated (admin).
+
 pub fn is_process_elevated() -> bool {
     unsafe {
         let mut token: HANDLE = std::ptr::null_mut();
@@ -81,7 +79,7 @@ pub enum ElevateError {
     Failed(String),
 }
 
-/// Launch `exe` elevated via ShellExecuteEx `runas` (UAC). Does not wait for exit.
+
 pub fn shell_execute_runas(
     exe: &Path,
     args: &str,

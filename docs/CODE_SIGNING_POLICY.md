@@ -1,22 +1,23 @@
-# Code signing policy
+# Code signing policy (0.2.7+)
 
-Required by [SignPath Foundation](https://signpath.org/) for open-source Authenticode signing.
+Windows installers for **zapp** ship from GitHub Releases. Authenticode via SignPath Foundation was applied for and **declined** (Nov 2026) due to insufficient public visibility for the Foundation program. Paid SignPath is not used. Releases therefore ship **without Authenticode** for now; we may reapply to SignPath Foundation later.
 
-Windows installers for **zapp** are intended to be Authenticode-signed via the SignPath Foundation. Until signing is active, GitHub Releases may still ship unsigned builds.
+## What users get today
+
+- **Installers:** unsigned NSIS `zapp_*_x64-setup.exe` (and MSI). Windows SmartScreen may warn on first run — expected until Authenticode exists.
+- **In-app updates:** still integrity-checked with minisign (`plugins.updater.pubkey` in `tauri.conf.json`). That layer does not replace Authenticode and does not silence SmartScreen.
 
 ## Downloads
 
 - Installers: [GitHub Releases](https://github.com/krwg/zapp/releases)
 - Recommended file: `zapp_*_x64-setup.exe` (NSIS)
-- This project uses the **SignPath Foundation** for code signing of Windows release artifacts
 
 ## Details
 
 - **Project:** [krwg/zapp](https://github.com/krwg/zapp)
-- **What is signed:** Windows NSIS installer (`*-setup.exe`), optionally MSI
-- **Who signs:** SignPath Foundation (when the org/project is approved and CI secrets are set)
+- **What would be Authenticode-signed (if approved later):** Windows NSIS installer (`*-setup.exe`), optionally MSI
 - **Build origin:** GitHub Actions workflow `Release Windows` on this repository only
-- **How to verify:** installer Properties → Digital Signatures, or `Get-AuthenticodeSignature .\zapp_*_x64-setup.exe`
-- **In-app updates:** separate minisign key (`plugins.updater.pubkey` in `tauri.conf.json`); after Authenticode signing, updater `.sig` files are regenerated so both trust layers match
+- **CI:** SignPath steps stay optional; they run only when SignPath secrets are present. Until then, builds skip Authenticode and publish unsigned setup + updater `.sig`
+- **How to verify updater trust:** matching `.sig` next to the installer / `latest.json` from the same release
 
 Maintainer contact: GitHub Issues on the repository above.

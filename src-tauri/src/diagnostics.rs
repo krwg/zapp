@@ -9,9 +9,9 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::engine::{
-    diag_targets, kill_orphan_winws, latency_stats, probe_resolved_parallel,
-    rank_score_full, resolve_diag_targets, run_preflight_scoped, score_by_service,
-    soft_contribution, strategy_prior_bonus, PreflightScope,
+    diag_targets, kill_orphan_winws, latency_stats, path_verdict_from_results,
+    probe_resolved_parallel, rank_score_full, resolve_diag_targets, run_preflight_scoped,
+    score_by_service, soft_contribution, strategy_prior_bonus, PreflightScope,
 };
 use crate::model::*;
 use crate::state::{AppState, Store};
@@ -53,7 +53,7 @@ fn mutate_if_alive(
     true
 }
 
-/// Exit path when this run is no longer active: cancel → restore; superseded → silent stop.
+
 fn bail(
     app: &AppHandle,
     state: &AppState,
@@ -146,8 +146,8 @@ fn run_diagnostics_worker_inner(
     };
 
     let mut profiles = profiles_raw;
-    // Manual Smart check uses normal ranking. Prefer-previous is only for background re-check:
-    // otherwise Fast mode re-selects the current (often UDP-broken) strategy and changes nothing.
+
+
     profiles.sort_by(|a, b| {
         let prev_ord = if prefer_previous {
             let a_prev = snapshot.previous.as_deref() == Some(a.1.as_str());
@@ -189,8 +189,8 @@ fn run_diagnostics_worker_inner(
 
     let _ = state.engine.set_running(false);
 
-    // Our orphaned winws from a previous helper session must not look like Flowseal.
-    // Clean orphans first, then env-preflight treats any leftover winws as foreign.
+
+
     kill_orphan_winws();
     thread::sleep(Duration::from_millis(60));
 
@@ -293,7 +293,7 @@ fn run_diagnostics_worker_inner(
         }
 
         let host_results = if start_res.is_ok() {
-            // Short settle so WinDivert filters attach before probes.
+
             thread::sleep(Duration::from_millis(150));
             let budget = timeout.min(Duration::from_millis(1100));
             let t_probe = Instant::now();
@@ -307,7 +307,7 @@ fn run_diagnostics_worker_inner(
             Vec::new()
         };
 
-        // 250ms start poll can miss a late driver/AV crash — don't score as "weak services".
+
         let died_during_probes = start_res.is_ok() && !state.engine.winws_alive();
 
         let t_stop = Instant::now();
@@ -374,6 +374,17 @@ fn run_diagnostics_worker_inner(
                 probes.first().map(|p| format!("{} ({})", t.host, p.note))
             })
             .collect();
+        let soft_udp_voice_gap = host_results.iter().any(|(t, probes)| {
+            !t.critical
+                && probes.iter().all(|p| !p.ok)
+                && probes.iter().any(|p| {
+                    p.protocol.contains("udp")
+                        || p.protocol.contains("stun")
+                        || p.protocol.contains("quic")
+                        || p.note.to_ascii_lowercase().contains("voice")
+                        || p.note.to_ascii_lowercase().contains("stun")
+                })
+        });
 
         let services: Vec<DiagnosticServiceScore> = adaptive
             .services
@@ -422,8 +433,13 @@ fn run_diagnostics_worker_inner(
             } else {
                 format!(" · soft gaps: {}", soft_fail_notes.join(", "))
             };
+            let voice_warn = if soft_udp_voice_gap {
+                " · Discord voice (UDP) may still fail"
+            } else {
+                ""
+            };
             format!(
-                "{ok}/{} probes ok · soft {soft_score} · rank {score} · {service_summary}{soft_warn}",
+                "{ok}/{} probes ok · soft {soft_score} · rank {score} · {service_summary}{soft_warn}{voice_warn}",
                 adaptive.all_probes.len()
             )
         } else if !adaptive.services.is_empty() {
@@ -449,6 +465,7 @@ fn run_diagnostics_worker_inner(
                 .unwrap_or_else(|| "Targets unreachable".into())
         };
 
+        let path_verdict = path_verdict_from_results(&host_results);
         let row = DiagnosticStrategyResult {
             id: new_id("r"),
             name: name.clone(),
@@ -463,6 +480,7 @@ fn run_diagnostics_worker_inner(
             hosts,
             notes,
             tested_at: now_iso(),
+            path_verdict: Some(path_verdict),
         };
 
         tested += 1;
@@ -496,7 +514,7 @@ fn run_diagnostics_worker_inner(
                 Some((_, best_score)) if score <= *best_score => {}
                 _ => best = Some((name.clone(), score)),
             }
-            // Fast mode: stop on a strong pass (not merely the first weak pass).
+
             if matches!(mode, DiagnosticsMode::Fast) {
                 let strong = score >= 88 && soft_score >= 40;
                 let solid = score >= 92;
@@ -617,12 +635,50 @@ fn complete_ok(
     cancel: &Arc<Mutex<bool>>,
     snapshot: &Snapshot,
 ) {
+    let (winner_name, winner_score, winner_soft, winner_verdict) = {
+        let store = state.inner.lock().expect("state lock");
+        let best = store
+            .diagnostics
+            .results
+            .iter()
+            .filter(|r| r.success)
+            .max_by(|a, b| {
+                a.score
+                    .cmp(&b.score)
+                    .then(a.soft_score.cmp(&b.soft_score))
+            });
+        match best {
+            Some(r) => (
+                Some(r.name.clone()),
+                r.score,
+                r.soft_score,
+                r.path_verdict.clone(),
+            ),
+            None => (None, 0, 0, None),
+        }
+    };
+
+    if let Some(name) = winner_name.clone() {
+        let net = crate::network::current_fingerprint().key();
+        crate::persist::push_working_mode(
+            state.engine.app_data(),
+            WorkingModeEntry {
+                strategy_name: name,
+                score: winner_score,
+                soft_score: winner_soft,
+                network_key: Some(net),
+                tested_at: now_iso(),
+            },
+        );
+    }
+
     if !mutate_if_alive(state, run_id, cancel, |store| {
         store.diagnostics.phase = DiagnosticPhase::Completed;
         store.diagnostics.progress = 100;
         store.diagnostics.current_strategy = None;
         store.diagnostics.finished_at = Some(now_iso());
         store.diagnostics.is_demo = false;
+        store.diagnostics.path_verdict = winner_verdict;
     }) {
         bail(app, state, run_id, cancel, snapshot);
         return;

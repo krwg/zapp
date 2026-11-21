@@ -5,7 +5,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { ChevronDown, Link as LinkIcon } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
+import { ConflictShield } from '@/components/domain/ConflictShield/ConflictShield'
 import { ConnectionCard } from '@/components/domain/ConnectionCard/ConnectionCard'
+import { PathVerdictStrip } from '@/components/domain/PathVerdictStrip/PathVerdictStrip'
+import { RecentWorkingModes } from '@/components/domain/RecentWorkingModes/RecentWorkingModes'
 import { PageHeader } from '@/components/layout/PageHeader/PageHeader'
 import { Button } from '@/components/ui/Button/Button'
 import { Hint } from '@/components/ui/Hint/Hint'
@@ -22,7 +25,7 @@ import page from '../shared/page.module.css'
 import styles from './OverviewPage.module.css'
 
 function friendlyModeName(name: string): string {
-  // "general (FAKE TLS AUTO)" → keep readable stem before the technical paren.
+  
   const cut = name.indexOf(' (')
   if (cut > 0) return name.slice(0, cut)
   return name
@@ -36,6 +39,9 @@ export function OverviewPage() {
     resetEngine,
     checkService,
     checkAllServices,
+    applyWorkingMode,
+    resolveConflicts,
+    dismissConflicts,
     openBugReport,
     busy,
   } = useAppState()
@@ -57,20 +63,30 @@ export function OverviewPage() {
 
   if (!snapshot) return null
 
-  const { connection, activeProfile, services, system } = snapshot
+  const { connection, activeProfile, services, system, workingModes, conflicts } = snapshot
   const neverChecked =
     !activeProfile?.lastCheckedAt &&
     !(diagnosticsLive?.results?.length) &&
     diagnosticsLive?.phase !== 'completed'
 
+  const pathVerdict = diagnosticsLive?.pathVerdict ?? null
   const yt = services.find((s) => /youtube/i.test(s.name) || /youtube/i.test(s.host))
   const discord = services.find((s) => /discord/i.test(s.name) || /discord/i.test(s.host))
-  const sitesFreshOk =
+  const sitesHttpsOk =
     connection.status === 'running' &&
     !!yt &&
     !!discord &&
     displaySiteStatus(yt, connection.status) === 'available' &&
     displaySiteStatus(discord, connection.status) === 'available'
+  const pathsAllOk = pathVerdict
+    ? pathVerdict.youtube === 'available' &&
+      pathVerdict.discordWeb === 'available' &&
+      pathVerdict.discordVoice === 'available'
+    : sitesHttpsOk
+  const voiceHonestyNeeded =
+    !!pathVerdict &&
+    pathVerdict.discordVoice !== 'available' &&
+    (pathVerdict.youtube === 'available' || pathVerdict.discordWeb === 'available')
 
   const modeSummary = (() => {
     if (!activeProfile) return null
@@ -86,7 +102,7 @@ export function OverviewPage() {
         }),
       )
     }
-    if (sitesFreshOk) {
+    if (pathsAllOk) {
       parts.push(t('home.modeSitesOk'))
     } else if (connection.status === 'running') {
       parts.push(t('home.modeSitesMixed'))
@@ -124,6 +140,27 @@ export function OverviewPage() {
       />
 
       <div className={page.stack}>
+        {!system.engineInstalled && (
+          <section className={styles.notice} role="status">
+            <div className={styles.noticeCopy}>
+              <div className={styles.noticeTitle}>{t('home.engineMissingTitle')}</div>
+              <p className={styles.noticeBody}>{t('home.engineMissingBody')}</p>
+            </div>
+            <Button variant="primary" size="sm" onClick={() => navigate('/updates')}>
+              {t('home.engineMissingCta')}
+            </Button>
+          </section>
+        )}
+
+        {conflicts && conflicts.images.length > 0 && (
+          <ConflictShield
+            conflict={conflicts}
+            busy={!!busy.conflicts}
+            onResolve={() => void resolveConflicts(true)}
+            onDismiss={dismissConflicts}
+          />
+        )}
+
         <ConnectionCard
           connection={connection}
           busy={busy.engine}
@@ -212,6 +249,14 @@ export function OverviewPage() {
           )}
         </section>
 
+        {pathVerdict && <PathVerdictStrip verdict={pathVerdict} />}
+
+        <RecentWorkingModes
+          modes={workingModes}
+          busy={busy}
+          onApply={(name) => void applyWorkingMode(name)}
+        />
+
         <section className={styles.panel}>
           <div className={styles.panelHeader}>
             <h2 className={styles.panelTitle}>{t('home.sites')}</h2>
@@ -219,6 +264,9 @@ export function OverviewPage() {
               {t('home.openSites')}
             </Link>
           </div>
+          {(voiceHonestyNeeded || (sitesHttpsOk && !pathVerdict)) && (
+            <p className={styles.voiceHonesty}>{t('home.voiceHonesty')}</p>
+          )}
           <div className={styles.siteList}>
             {services.map((service) => {
               const shown = displaySiteStatus(service, connection.status)
@@ -305,3 +353,4 @@ export function OverviewPage() {
     </div>
   )
 }
+

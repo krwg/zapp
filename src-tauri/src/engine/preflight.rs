@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use super::elevate::is_elevated;
 use super::faults::{EngineFault, FaultCode};
-use super::process::process_running;
+use super::process::{kill_image, process_running};
 use super::strategy::parse_strategy_bat;
 
 #[cfg(windows)]
@@ -40,11 +40,11 @@ pub struct PreflightReport {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreflightScope {
-    /// Pack files, conflicts, WinDivert service, elevation.
+
     Environment,
-    /// Strategy .bat parse + payload paths only (cheap; safe per strategy).
+
     Strategy,
-    /// Both (UI / normal Start).
+
     Full,
 }
 
@@ -57,11 +57,11 @@ pub fn run_preflight_scoped(root: &Path, strategy: &str, scope: PreflightScope) 
     let mut checks = Vec::new();
 
     if matches!(scope, PreflightScope::Environment | PreflightScope::Full) {
-        // Flowseal BATs reference *-user.txt lists created by service.bat.
+
         let _ = super::pack::ensure_flowseal_sidecars(root);
         push_pack_checks(root, &mut checks);
-        // Foreign winws only on Environment-only (diagnostics after stop). Full Start may
-        // still own a live winws while switching strategies.
+
+
         let foreign_winws = matches!(scope, PreflightScope::Environment);
         push_conflict_checks(&mut checks, foreign_winws);
         push_windivert_service(&mut checks);
@@ -70,7 +70,7 @@ pub fn run_preflight_scoped(root: &Path, strategy: &str, scope: PreflightScope) 
 
     if matches!(scope, PreflightScope::Strategy | PreflightScope::Full) {
         if matches!(scope, PreflightScope::Strategy) {
-            // Sidecars once per process is enough; cheap no-op if already present.
+
             let _ = super::pack::ensure_flowseal_sidecars(root);
         }
         push_strategy_checks(root, strategy, &mut checks);
@@ -258,36 +258,89 @@ fn extract_path_arg(arg: &str) -> Option<String> {
     None
 }
 
-fn detect_conflicting_bypass(foreign_winws: bool) -> Option<String> {
-    // Common DPI / unblocker GUIs and helpers that fight WinDivert with zapp.
-    let names = [
-        "goodbyedpi.exe",
-        "zapret_gui.exe",
-        "zapretgui.exe",
-        "zapret.exe",
-        "ezunblock.exe",
-        "blockcheck.exe",
-        "soupfork.exe",
-        "bye-dpi.exe",
-        "byedpi.exe",
-        "ciadpi.exe",
-        "discord_voice_proxy.exe",
-        "youtubeunblok.exe",
-        "youtubeunblock.exe",
-        "nfqws.exe",
-    ];
-    for name in names {
+const CONFLICT_IMAGES: &[&str] = &[
+    "goodbyedpi.exe",
+    "zapret_gui.exe",
+    "zapretgui.exe",
+    "zapret.exe",
+    "ezunblock.exe",
+    "blockcheck.exe",
+    "soupfork.exe",
+    "bye-dpi.exe",
+    "byedpi.exe",
+    "ciadpi.exe",
+    "discord_voice_proxy.exe",
+    "youtubeunblok.exe",
+    "youtubeunblock.exe",
+    "nfqws.exe",
+];
+
+#[derive(Debug, Clone)]
+pub struct ConflictSnapshot {
+    pub images: Vec<String>,
+    pub detail: String,
+}
+
+pub fn list_conflicting_images(foreign_winws: bool) -> Vec<String> {
+    let mut out = Vec::new();
+    for name in CONFLICT_IMAGES {
         if process_running(name) {
-            return Some(format!("{name} is running — stop it before using zapp"));
+            out.push((*name).to_string());
         }
     }
     if foreign_winws && process_running("winws.exe") {
+        out.push("winws.exe".into());
+    }
+    out
+}
+
+pub fn detect_conflicting_bypass(foreign_winws: bool) -> Option<String> {
+    let images = list_conflicting_images(foreign_winws);
+    if images.is_empty() {
+        return None;
+    }
+    if images.iter().any(|i| i == "winws.exe") && images.len() == 1 {
         return Some(
             "Another winws.exe is still running (Flowseal .bat or Windows service). Stop it, then retry Smart check."
                 .into(),
         );
     }
-    None
+    Some(format!(
+        "{} is running — stop it before using zapp",
+        images.join(", ")
+    ))
+}
+
+
+pub fn resolve_conflicting_bypass(kill_foreign_winws: bool) -> ConflictSnapshot {
+    let before = list_conflicting_images(kill_foreign_winws);
+    for name in CONFLICT_IMAGES {
+        if process_running(name) {
+            kill_image(name);
+        }
+    }
+    if kill_foreign_winws && process_running("winws.exe") {
+        kill_image("winws.exe");
+    }
+
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    let after = list_conflicting_images(kill_foreign_winws);
+    let detail = if after.is_empty() {
+        if before.is_empty() {
+            "No conflicting DPI tools detected".into()
+        } else {
+            format!("Stopped: {}", before.join(", "))
+        }
+    } else {
+        format!(
+            "Still running: {} — close them manually if needed",
+            after.join(", ")
+        )
+    };
+    ConflictSnapshot {
+        images: after,
+        detail,
+    }
 }
 
 fn windivert_service_state() -> String {

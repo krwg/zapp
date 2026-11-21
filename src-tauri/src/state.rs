@@ -25,10 +25,14 @@ pub struct AppState {
     pub(crate) inner: Mutex<Store>,
     diag_cancel: Mutex<Option<Arc<Mutex<bool>>>>,
     diag_worker: Mutex<Option<JoinHandle<()>>>,
-    /// Latest prefer_previous requested while a run was still winding down.
+
     diag_pending: Mutex<Option<bool>>,
-    /// Serializes start / queue / drain so runs are not silently dropped.
+
     diag_gate: Mutex<()>,
+    /// Throttle helper/OS status IPC on frequent `get_snapshot` polls.
+    last_os_refresh: Mutex<Option<std::time::Instant>>,
+    /// Throttle conflict ToolHelp scans between snapshot polls.
+    conflict_cache: Mutex<(Option<std::time::Instant>, Vec<String>)>,
 }
 
 pub(crate) struct Store {
@@ -63,8 +67,12 @@ impl AppState {
     ) -> Self {
         let updates = UpdateManager::new(seed_updates(&engine_version), app_data.clone());
         let settings = crate::persist::load_settings(&app_data).unwrap_or_else(seed_settings);
+        crate::engine::set_ui_locale(&settings.ui_locale);
         let auto_update_enabled = settings.auto_check_updates;
-        // Restore last active strategy name into the engine if still present.
+        let layout_now = engine.layout();
+        let engine_installed =
+            layout_now.is_installed() && crate::engine::pack_payloads_present(&layout_now.root);
+
         if let Some(name) = crate::persist::load_session(&app_data).active_strategy {
             if profiles.iter().any(|p| p.name == name) {
                 let want = name.clone();
@@ -82,6 +90,8 @@ impl AppState {
             diag_worker: Mutex::new(None),
             diag_pending: Mutex::new(None),
             diag_gate: Mutex::new(()),
+            last_os_refresh: Mutex::new(None),
+            conflict_cache: Mutex::new((None, Vec::new())),
             inner: Mutex::new(Store {
                 profiles,
                 services: seed_services(),
@@ -95,27 +105,62 @@ impl AppState {
                     last_update_check_at: None,
                     auto_update_enabled,
                     elevated: is_elevated(),
+                    engine_installed,
                 },
             }),
         }
     }
 
     pub fn snapshot(&self) -> AppSnapshot {
-        
+        const OS_REFRESH_MIN: std::time::Duration = std::time::Duration::from_secs(8);
+        const CONFLICT_SCAN_MIN: std::time::Duration = std::time::Duration::from_secs(12);
+
         let status = self.engine.status();
-        if !matches!(
-            status,
-            EngineStatus::Starting | EngineStatus::Stopping
-        ) {
-            self.engine.refresh_status_from_os();
+        if !matches!(status, EngineStatus::Starting | EngineStatus::Stopping) {
+            let due = {
+                let last = self.last_os_refresh.lock().expect("os refresh lock");
+                last.map(|t| t.elapsed() >= OS_REFRESH_MIN).unwrap_or(true)
+            };
+            if due {
+                *self.last_os_refresh.lock().expect("os refresh lock") =
+                    Some(std::time::Instant::now());
+                self.engine.refresh_status_from_os();
+            }
         }
 
-        let mut store = self.inner.lock().expect("state lock");
-        
-        if !store.system.elevated {
-            store.system.elevated = is_elevated();
+        let conflict_images = {
+            let mut cache = self.conflict_cache.lock().expect("conflict cache");
+            let due = cache
+                .0
+                .map(|t| t.elapsed() >= CONFLICT_SCAN_MIN)
+                .unwrap_or(true);
+            if due {
+                let images = crate::engine::list_conflicting_images(false);
+                *cache = (Some(std::time::Instant::now()), images);
+            }
+            cache.1.clone()
+        };
+        let conflicts = if conflict_images.is_empty() {
+            None
+        } else {
+            Some(crate::model::ConflictInfo {
+                detail: format!("{} is running", conflict_images.join(", ")),
+                images: conflict_images,
+            })
+        };
+
+        let store = self.inner.lock().expect("state lock");
+        let mut system = store.system.clone();
+        if !system.elevated {
+            system.elevated = is_elevated();
         }
+        let layout = self.engine.layout();
+        system.engine_version = layout.version.clone();
+        system.engine_installed =
+            layout.is_installed() && crate::engine::pack_payloads_present(&layout.root);
+
         let active = store.profiles.iter().find(|p| p.is_active).cloned();
+        let working_modes = crate::persist::load_session(self.engine.app_data()).working_modes;
         AppSnapshot {
             connection: ConnectionState {
                 status: self.engine.status(),
@@ -131,11 +176,13 @@ impl AppState {
             active_profile: active,
             profiles: store.profiles.clone(),
             services: store.services.clone(),
-            system: store.system.clone(),
+            system,
             diagnostics: store.diagnostics.clone(),
             updates: self.updates.list(),
             settings: store.settings.clone(),
             about: store.about.clone(),
+            working_modes,
+            conflicts,
         }
     }
 
@@ -175,11 +222,11 @@ impl AppState {
     }
 
     pub fn start_diagnostics(&self, app: AppHandle) -> AppResult<DiagnosticRun> {
-        // Manual Smart check: do not prefer the previous strategy (UDP issues are invisible to probes).
+
         self.start_diagnostics_with(app, false)
     }
 
-    /// Background re-check may pass `prefer_previous = true` to verify the active strategy first.
+
     pub fn start_diagnostics_with(
         &self,
         app: AppHandle,
@@ -188,8 +235,8 @@ impl AppState {
         let _gate = self.diag_gate.lock().expect("diag gate");
         self.cancel_diagnostics_flag();
 
-        // If a worker is still alive (running or cancelling), queue the latest request
-        // instead of spawning a second joiner chain that can silently drop a start.
+
+
         {
             let worker = self.diag_worker.lock().expect("worker lock");
             if worker.as_ref().is_some_and(|h| !h.is_finished()) {
@@ -212,7 +259,7 @@ impl AppState {
             }
         }
 
-        // Reap a finished handle (join is instant once is_finished).
+
         if let Some(done) = self.diag_worker.lock().expect("worker lock").take() {
             let _ = done.join();
         }
@@ -249,12 +296,13 @@ impl AppState {
                 finished_at: None,
                 results: vec![],
                 is_demo: false,
+                path_verdict: None,
             };
         }
 
         let handle = thread::spawn(move || {
             run_diagnostics_worker(app.clone(), run_id, cancel, prefer_previous);
-            // Drain queued restart without holding the gate across the worker body.
+
             let app_for_pending = app.clone();
             if let Some(state) = app.try_state::<AppState>() {
                 let pending = {
@@ -273,7 +321,7 @@ impl AppState {
     }
 
     pub fn cancel_diagnostics(&self) -> AppResult<DiagnosticRun> {
-        // Flip cancel and drop any queued restart — Cancel must not auto-start again.
+
         self.cancel_diagnostics_flag();
         *self
             .diag_pending
@@ -462,15 +510,15 @@ impl AppState {
         Ok(list)
     }
 
-    /// Check GitHub releases; when `auto_install` is on, install Available channels.
-    /// Returns whether the app must quit (Application installer launched).
+
+
     pub fn check_updates_and_auto_install(&self, auto_install: bool) -> AppResult<bool> {
         let _ = self.bootstrap_engine_if_needed()?;
         let _ = self.check_updates()?;
         if !auto_install {
             return Ok(false);
         }
-        let outcomes = self.updates.auto_install_available()?;
+        let outcomes = self.updates.auto_install_available(None)?;
         let mut restart = false;
         for outcome in outcomes {
             self.apply_update_outcome(&outcome)?;
@@ -481,8 +529,30 @@ impl AppState {
         Ok(restart)
     }
 
-    /// Download Flowseal into app data when the pack is missing/incomplete.
-    /// Also creates Flowseal user-list sidecars the BATs expect.
+
+    pub fn check_updates_and_auto_install_with_app(
+        &self,
+        app: &AppHandle,
+        auto_install: bool,
+    ) -> AppResult<bool> {
+        let _ = self.bootstrap_engine_if_needed()?;
+        let _ = self.check_updates()?;
+        if !auto_install {
+            return Ok(false);
+        }
+        let outcomes = self.updates.auto_install_available(Some(app))?;
+        let mut restart = false;
+        for outcome in outcomes {
+            self.apply_update_outcome(&outcome)?;
+            if outcome.restart_required {
+                restart = true;
+            }
+        }
+        Ok(restart)
+    }
+
+
+
     pub fn bootstrap_engine_if_needed(&self) -> AppResult<bool> {
         let layout = self.engine.layout();
         let _ = crate::engine::ensure_flowseal_sidecars(&layout.root);
@@ -506,13 +576,17 @@ impl AppState {
         }
     }
 
-    pub fn update_channel(&self, id: UpdateChannelId) -> AppResult<(UpdateChannel, bool)> {
-        let outcome = self.updates.update_channel(id)?;
+    pub fn update_channel(
+        &self,
+        id: UpdateChannelId,
+        app: Option<&AppHandle>,
+    ) -> AppResult<(UpdateChannel, bool)> {
+        let outcome = self.updates.update_channel(id, app)?;
         self.apply_update_outcome(&outcome)?;
         Ok((outcome.channel, outcome.restart_required))
     }
 
-    /// Offline Flowseal zip import (native file picker).
+
     pub fn import_engine_pack_interactive(&self) -> AppResult<UpdateChannel> {
         #[cfg(not(windows))]
         {
@@ -542,7 +616,7 @@ impl AppState {
         let mut store = self.inner.lock().expect("state lock");
         match outcome.channel.id {
             UpdateChannelId::Application => {
-                // Installer applies the new version; keep displayed target in notes/latest.
+
                 store.system.app_version = outcome.channel.current_version.clone();
                 store.about.version = outcome.channel.current_version.clone();
             }
@@ -598,6 +672,30 @@ impl AppState {
         if let Some(v) = patch.diagnostics_mode {
             store.settings.diagnostics_mode = v;
         }
+        if let Some(v) = patch.watchdog_interval_minutes {
+            store.settings.watchdog_interval_minutes = v;
+        }
+        if let Some(v) = patch.watchdog_enabled {
+            store.settings.watchdog_enabled = v;
+        }
+        if let Some(v) = patch.watchdog_auto_recheck {
+            store.settings.watchdog_auto_recheck = v;
+        }
+        if let Some(v) = patch.reapply_working_mode_on_network_change {
+            store.settings.reapply_working_mode_on_network_change = v;
+        }
+        if let Some(v) = patch.wizard_completed {
+            store.settings.wizard_completed = v;
+        }
+        if let Some(v) = patch.ui_locale {
+            let normalized = if v.eq_ignore_ascii_case("ru") {
+                "ru".to_string()
+            } else {
+                "en".to_string()
+            };
+            crate::engine::set_ui_locale(&normalized);
+            store.settings.ui_locale = normalized;
+        }
         if let Some(v) = patch.network_timeout_ms {
             store.settings.network_timeout_ms = v;
         }
@@ -638,7 +736,36 @@ impl AppState {
         self.remember_bypass_desired(false);
     }
 
-    /// Start bypass again when session says it should be on (login / resume / network).
+    pub fn apply_working_mode(&self, strategy_name: &str) -> AppResult<Profile> {
+        let profile_id = {
+            let store = self.inner.lock().expect("state lock");
+            store
+                .profiles
+                .iter()
+                .find(|p| p.name == strategy_name)
+                .map(|p| p.id.clone())
+                .ok_or_else(|| AppError::from(format!("Mode '{strategy_name}' not found")))?
+        };
+        let profile = self.set_active_profile(&profile_id)?;
+        if !matches!(
+            self.engine.status(),
+            EngineStatus::Running | EngineStatus::Starting
+        ) {
+            let _ = self.engine.set_running(true)?;
+            self.remember_bypass_desired(true);
+        }
+        Ok(profile)
+    }
+
+    pub fn resolve_conflicts(&self, kill_foreign_winws: bool) -> crate::model::ConflictInfo {
+        let snap = crate::engine::resolve_conflicting_bypass(kill_foreign_winws);
+        crate::model::ConflictInfo {
+            images: snap.images,
+            detail: snap.detail,
+        }
+    }
+
+
     pub fn try_restore_bypass(&self, reason: &str) -> bool {
         let settings = self.snapshot().settings;
         let allow = match reason {
@@ -664,6 +791,29 @@ impl AppState {
         ) {
             return true;
         }
+
+
+        if reason == "network" && settings.reapply_working_mode_on_network_change {
+            let net = crate::network::current_fingerprint().key();
+            let candidates: Vec<String> = session
+                .working_modes
+                .iter()
+                .filter(|m| m.network_key.as_deref() == Some(net.as_str()) || m.network_key.is_none())
+                .map(|m| m.strategy_name.clone())
+                .collect();
+            for name in candidates {
+                self.engine.set_active_strategy(name.clone());
+                if self.engine.set_running(true).is_ok() {
+                    self.history.push(
+                        "engine",
+                        format!("Re-applied working mode '{name}' after {reason}"),
+                    );
+                    log::info!("working mode '{name}' re-applied after {reason}");
+                    return true;
+                }
+            }
+        }
+
         if let Some(name) = session.active_strategy.clone() {
             self.engine.set_active_strategy(name);
         }
@@ -827,6 +977,7 @@ fn seed_diagnostics() -> DiagnosticRun {
         finished_at: None,
         is_demo: false,
         results: vec![],
+        path_verdict: None,
     }
 }
 
@@ -884,6 +1035,12 @@ fn seed_settings() -> AppSettings {
         auto_diagnostics: true,
         diagnostics_interval_hours: 24,
         diagnostics_mode: DiagnosticsMode::Fast,
+        watchdog_interval_minutes: 5,
+        watchdog_enabled: true,
+        watchdog_auto_recheck: false,
+        reapply_working_mode_on_network_change: true,
+        wizard_completed: false,
+        ui_locale: "en".into(),
         network_timeout_ms: 5000,
         network_retries: 2,
         advanced_logging: false,

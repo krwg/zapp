@@ -25,15 +25,15 @@ pub struct GithubAsset {
     pub name: String,
     pub browser_download_url: String,
     pub size: u64,
-    /// GitHub Releases asset digest, e.g. `sha256:abcdef…` (optional until publisher sets it).
+
     #[serde(default)]
     pub digest: Option<String>,
 }
 
-/// API bases to try (mirrors first). Configure with:
-/// - `ZAPP_GITHUB_API_BASE` — single preferred base (no trailing slash)
-/// - `ZAPP_GITHUB_API_MIRRORS` — comma-separated extra bases
-/// Always falls back to `https://api.github.com`.
+
+
+
+
 fn github_api_bases() -> Vec<String> {
     let mut bases = Vec::new();
     if let Ok(one) = env::var("ZAPP_GITHUB_API_BASE") {
@@ -57,8 +57,8 @@ fn github_api_bases() -> Vec<String> {
     bases
 }
 
-/// Optional prefix for asset CDN when GitHub releases downloads are blocked.
-/// Example: `https://mirror.example/https://github.com`
+
+
 fn rewrite_asset_url(url: &str) -> String {
     if let Ok(prefix) = env::var("ZAPP_GITHUB_ASSET_PREFIX") {
         let p = prefix.trim().trim_end_matches('/');
@@ -112,7 +112,7 @@ pub fn fetch_zapp_latest() -> AppResult<GithubRelease> {
     fetch_latest_release(ZAPP_REPO)
 }
 
-/// Download URL with optional asset mirror prefix.
+
 pub fn asset_download_url(asset: &GithubAsset) -> String {
     rewrite_asset_url(&asset.browser_download_url)
 }
@@ -125,8 +125,8 @@ impl GithubRelease {
             .or_else(|| self.assets.iter().find(|a| a.name.ends_with(".tar.gz")))
     }
 
-    /// Prefer Windows installer assets for the Application channel.
-    /// NSIS setup.exe ranks above MSI (README recommends NSIS; avoids dual uninstall entries).
+
+
     pub fn preferred_app_asset(&self) -> Option<&GithubAsset> {
         let rank = |name: &str| -> u8 {
             let n = name.to_ascii_lowercase();

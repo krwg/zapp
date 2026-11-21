@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "zapp",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "identifier": "app.zapp.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -28,6 +28,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": false,
     "targets": ["nsis", "msi"],
     "icon": [
       "icons/32x32.png",
@@ -53,6 +54,14 @@
         "sidebarImage": "icons/nsis-sidebar.bmp",
         "installerHooks": "windows/hooks.nsi"
       }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhEQ0MyRDhBRkEyMzMzN0EKUldSNk15UDZpaTNNamJnNGIvci9GR21GWmZtVmxCcXJKRnZSdGlCRkpPNlcrbnNvbzQ5eUNOT1YK",
+      "endpoints": [
+        "https://github.com/krwg/zapp/releases/latest/download/latest.json"
+      ]
     }
   }
 }

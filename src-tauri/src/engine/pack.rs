@@ -1,13 +1,11 @@
-//! Keep a Flowseal pack usable for winws launches (sidecars the BAT expects).
-
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::error::{AppError, AppResult};
 
-/// User lists that Flowseal `service.bat :load_user_lists` would create.
-/// Our helper/winws path skips that bat, so we create them ourselves.
+
+
 const USER_LIST_SEEDS: &[(&str, &str)] = &[
     (
         "lists/list-general-user.txt",
@@ -23,7 +21,7 @@ const USER_LIST_SEEDS: &[(&str, &str)] = &[
     ),
 ];
 
-/// Create missing Flowseal sidecar files. Safe to call repeatedly.
+
 pub fn ensure_flowseal_sidecars(root: &Path) -> AppResult<()> {
     if !root.exists() {
         return Ok(());
@@ -49,7 +47,7 @@ pub fn ensure_flowseal_sidecars(root: &Path) -> AppResult<()> {
     Ok(())
 }
 
-/// True when pack looks complete enough to start (winws + divert + any .bin payload).
+
 pub fn pack_payloads_present(root: &Path) -> bool {
     let bin = root.join("bin");
     if !bin.join("winws.exe").is_file() {
@@ -58,7 +56,7 @@ pub fn pack_payloads_present(root: &Path) -> bool {
     if !bin.join("WinDivert.dll").is_file() || !bin.join("WinDivert64.sys").is_file() {
         return false;
     }
-    // At least one fake payload used by strategies.
+
     let Ok(entries) = fs::read_dir(&bin) else {
         return false;
     };
@@ -70,8 +68,8 @@ pub fn pack_payloads_present(root: &Path) -> bool {
     })
 }
 
-/// Keep the newest `keep` version directories under `engine_root` (skip `current`).
-/// Older Flowseal / version folders are removed best-effort (roadmap pack cleanup N-1 → keep 2).
+
+
 pub fn cleanup_old_engine_packs(engine_root: &Path, keep: usize) {
     if keep == 0 || !engine_root.is_dir() {
         return;
@@ -95,7 +93,7 @@ pub fn cleanup_old_engine_packs(engine_root: &Path, keep: usize) {
         if name.eq_ignore_ascii_case("current") || name.eq_ignore_ascii_case("downloads") {
             continue;
         }
-        // Prefer dirs that look like packs or version containers with a nested pack.
+
         let is_pack = path.join("bin").join("winws.exe").is_file()
             || path.join("bin").join("nfqws").is_file();
         let has_nested = fs::read_dir(&path).ok().is_some_and(|rd| {

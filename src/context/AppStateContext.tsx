@@ -46,6 +46,9 @@ interface AppStateContextValue {
   importEnginePack: () => Promise<void>
   updatesLive: UpdateChannel[]
   updateSettings: (patch: Partial<AppSettings>, opts?: { quiet?: boolean }) => Promise<void>
+  applyWorkingMode: (strategyName: string) => Promise<void>
+  resolveConflicts: (killForeignWinws?: boolean) => Promise<void>
+  dismissConflicts: () => void
   getRecentErrors: () => Promise<string[]>
   openBugReport: (message: string, areas?: BugReportPrefill['areas']) => void
   getBugReportBundle: () => Promise<BugReportBundle>
@@ -64,7 +67,7 @@ function mergeSnapshot(prev: AppSnapshot | null, next: AppSnapshot): AppSnapshot
     TRANSITIONAL.includes(prev.connection.status) &&
     (next.connection.status === 'stopped' || next.connection.status === 'running')
   ) {
-    // Keep optimistic starting/stopping until the action settles.
+    
     connection = { ...next.connection, status: prev.connection.status }
   }
 
@@ -111,7 +114,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             expected: t('aboutPage.reportExpectedPh'),
             actual: message,
             areas: areas ?? { bypass: true },
-            // steps left blank for the user (~10%)
+            
           },
         },
       })
@@ -141,7 +144,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         try {
           await refresh()
         } catch {
-          /* keep UI */
+          
         }
       } finally {
         setBusy((prev) => ({ ...prev, [key]: false }))
@@ -155,6 +158,16 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     ;(async () => {
       try {
         await refresh()
+        
+        try {
+          const stored = localStorage.getItem('zapp.locale')
+          const locale = stored === 'ru' || stored === 'en' ? stored : null
+          if (locale) {
+            await api.updateSettings({ uiLocale: locale })
+          }
+        } catch {
+          
+        }
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -162,28 +175,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true
     }
-  }, [refresh])
-
-  useEffect(() => {
-    let unlisten: (() => void) | undefined
-    void (async () => {
-      try {
-        const { listen } = await import('@tauri-apps/api/event')
-        unlisten = await listen('app:quit-for-update', () => {
-          push({
-            title: t('toast.quitForUpdateTitle'),
-            description: t('toast.quitForUpdateDesc'),
-            tone: 'warning',
-          })
-        })
-      } catch {
-        /* browser mock */
-      }
-    })()
-    return () => {
-      unlisten?.()
-    }
-  }, [push, t])
+  }, [api, refresh])
 
   useEffect(() => {
     if (loading) return
@@ -196,7 +188,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           setUpdatesLive(snap.updates)
           setSnapshot((prev) => {
             let merged = mergeSnapshot(prev, snap)
-            // Drop transitional once engine action finished and server agrees.
             if (
               prev &&
               TRANSITIONAL.includes(prev.connection.status) &&
@@ -205,7 +196,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             ) {
               merged = { ...merged, connection: snap.connection }
             }
-            // Drop checking once individual checks cleared.
             if (checkingIdsRef.current.size === 0) {
               return { ...merged, services: snap.services }
             }
@@ -215,7 +205,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           /* keep last UI state */
         }
       })()
-    }, 2500)
+    }, 4000)
     return () => window.clearInterval(timer)
   }, [api, loading])
 
@@ -452,6 +442,114 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     })
   }, [api, push, refresh, t, withBusy])
 
+  const applyWorkingMode = useCallback(
+    async (strategyName: string) => {
+      await withBusy(`working:${strategyName}`, async () => {
+        await api.applyWorkingMode(strategyName)
+        await refresh()
+        push({
+          title: t('toast.modeReappliedTitle'),
+          description: t('toast.modeReappliedDesc', { name: strategyName }),
+          tone: 'success',
+        })
+      })
+    },
+    [api, push, refresh, t, withBusy],
+  )
+
+  const resolveConflicts = useCallback(
+    async (killForeignWinws = true) => {
+      await withBusy('conflicts', async () => {
+        const info = await api.resolveConflicts(killForeignWinws)
+        setSnapshot((prev) =>
+          prev
+            ? {
+                ...prev,
+                conflicts: info.images.length ? info : null,
+              }
+            : prev,
+        )
+        await refresh()
+        push({
+          title: t('toast.conflictsClearedTitle'),
+          description: t('toast.conflictsClearedDesc', { detail: info.detail }),
+          tone: 'success',
+        })
+      })
+    },
+    [api, push, refresh, t, withBusy],
+  )
+
+  const dismissConflicts = useCallback(() => {
+    setSnapshot((prev) => (prev ? { ...prev, conflicts: null } : prev))
+  }, [])
+
+  useEffect(() => {
+    const unlistens: Array<() => void> = []
+    void (async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event')
+        unlistens.push(
+          await listen('app:quit-for-update', () => {
+            push({
+              title: t('toast.quitForUpdateTitle'),
+              description: t('toast.quitForUpdateDesc'),
+              tone: 'warning',
+            })
+          }),
+        )
+        unlistens.push(
+          await listen<{ detail?: string; autoRecheck?: boolean }>(
+            'watchdog:bypass_stale',
+            (ev) => {
+              const detail = ev.payload?.detail || ''
+              const auto = !!ev.payload?.autoRecheck
+              push({
+                title: t('toast.watchdogStaleTitle'),
+                description: t('toast.watchdogStaleDesc', { detail }),
+                tone: 'warning',
+                actionLabel: auto ? undefined : t('toast.watchdogRecheck'),
+                onAction: auto
+                  ? undefined
+                  : () => {
+                      void startDiagnostics()
+                    },
+              })
+              void refresh()
+            },
+          ),
+        )
+        unlistens.push(
+          await listen('network:changed', () => {
+            void refresh()
+          }),
+        )
+        unlistens.push(
+          await listen('engine:restored', () => {
+            void refresh()
+          }),
+        )
+        unlistens.push(
+          await listen('diagnostics:completed', () => {
+            void refresh()
+          }),
+        )
+        unlistens.push(
+          await listen('diagnostics:progress', () => {
+            void api.getDiagnostics().then((run) => {
+              setDiagnosticsLive(run)
+            })
+          }),
+        )
+      } catch {
+        /* browser mock */
+      }
+    })()
+    return () => {
+      for (const u of unlistens) u()
+    }
+  }, [api, push, refresh, startDiagnostics, t])
+
   const updateSettings = useCallback(
     async (patch: Partial<AppSettings>, opts?: { quiet?: boolean }) => {
       await withBusy('settings', async () => {
@@ -497,6 +595,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       importEnginePack,
       updatesLive,
       updateSettings,
+      applyWorkingMode,
+      resolveConflicts,
+      dismissConflicts,
       getRecentErrors,
       getBugReportBundle,
       openBugReport,
@@ -520,6 +621,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       importEnginePack,
       updatesLive,
       updateSettings,
+      applyWorkingMode,
+      resolveConflicts,
+      dismissConflicts,
       getRecentErrors,
       getBugReportBundle,
       openBugReport,
@@ -552,3 +656,4 @@ function formatInvokeError(err: unknown, fallback: string): string {
 }
 
 export type { Profile }
+

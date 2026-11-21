@@ -4,6 +4,7 @@
 
 import { Outlet, useLocation } from 'react-router-dom'
 import { isTauriRuntime } from '@/api/tauriClient'
+import { FirstRunWizard } from '@/components/domain/FirstRunWizard/FirstRunWizard'
 import { BootLoader } from '@/components/ui/BootLoader/BootLoader'
 import { useAppState } from '@/context/AppStateContext'
 import { Sidebar } from '../Sidebar/Sidebar'
@@ -45,6 +46,7 @@ export function AppShell() {
           </div>
         </div>
       </main>
+      <FirstRunWizard />
     </div>
   )
 }

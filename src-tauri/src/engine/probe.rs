@@ -2,13 +2,33 @@
 // ║                   engine/probe                   ║
 // ╚════════════════════════════════════════════════════╝
 
+use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::model::AvailabilityStatus;
+use crate::model::{AvailabilityStatus, PathVerdict};
+
+const DNS_CACHE_TTL: Duration = Duration::from_secs(90);
+
+struct DnsCacheEntry {
+    addrs: Vec<SocketAddr>,
+    at: Instant,
+}
+
+fn dns_cache() -> &'static Mutex<HashMap<(String, u16), DnsCacheEntry>> {
+    static CACHE: OnceLock<Mutex<HashMap<(String, u16), DnsCacheEntry>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Drop cached DNS after network change so probes re-resolve.
+pub fn invalidate_dns_cache() {
+    if let Ok(mut g) = dns_cache().lock() {
+        g.clear();
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ProbeResult {
@@ -35,17 +55,17 @@ pub struct DiagTarget {
     pub service: &'static str,
     pub host: &'static str,
     pub port: u16,
-    /// When true, run HTTPS (skip redundant TCP:443).
+
     pub https: bool,
-    /// Soft UDP/QUIC smoke on `port` (usually 443) — never gates pass/fail alone.
+
     pub quic: bool,
-    /// Soft hosts affect the score but cannot alone fail the service.
+
     pub critical: bool,
 }
 
-/// Critical + soft endpoints used by Smart Check.
-/// Discord needs gateway + `discord.media` on Flowseal alt ports (2053…).
-/// Soft hosts refine ranking (CDN / images / QUIC / STUN) without alone failing a service.
+
+
+
 pub fn diag_targets() -> Vec<DiagTarget> {
     vec![
         DiagTarget {
@@ -64,7 +84,7 @@ pub fn diag_targets() -> Vec<DiagTarget> {
             quic: false,
             critical: true,
         },
-        // Soft: image CDN often blocked when main site still opens.
+
         DiagTarget {
             service: "youtube",
             host: "i.ytimg.com",
@@ -73,7 +93,7 @@ pub fn diag_targets() -> Vec<DiagTarget> {
             quic: false,
             critical: false,
         },
-        // Soft: player/API edge — closer to real playback than apex alone.
+
         DiagTarget {
             service: "youtube",
             host: "youtubei.googleapis.com",
@@ -82,7 +102,7 @@ pub fn diag_targets() -> Vec<DiagTarget> {
             quic: false,
             critical: false,
         },
-        // Soft: media CDN — often blocked when www still opens (playback stall).
+
         DiagTarget {
             service: "youtube",
             host: "googlevideo.com",
@@ -91,7 +111,7 @@ pub fn diag_targets() -> Vec<DiagTarget> {
             quic: false,
             critical: false,
         },
-        // Soft QUIC/UDP:443 — HTTP3 path used by many YT clients.
+
         DiagTarget {
             service: "youtube",
             host: "www.youtube.com",
@@ -116,7 +136,7 @@ pub fn diag_targets() -> Vec<DiagTarget> {
             quic: false,
             critical: true,
         },
-        // Matches `--hostlist-domains=discord.media --filter-tcp=2053,...` in Flowseal bats.
+
         DiagTarget {
             service: "discord",
             host: "discord.media",
@@ -133,7 +153,7 @@ pub fn diag_targets() -> Vec<DiagTarget> {
             quic: false,
             critical: false,
         },
-        // Soft STUN/UDP smoke — voice can fail while HTTPS looks fine.
+
         DiagTarget {
             service: "discord",
             host: "stun.cloudflare.com",
@@ -142,7 +162,7 @@ pub fn diag_targets() -> Vec<DiagTarget> {
             quic: false,
             critical: false,
         },
-        // Soft QUIC/UDP:443 for Discord web/client.
+
         DiagTarget {
             service: "discord",
             host: "discord.com",
@@ -160,7 +180,7 @@ pub struct ResolvedTarget {
     pub addrs: Vec<SocketAddr>,
 }
 
-/// Prefer IPv4 — bare AAAA with no v6 route causes false connect timeouts.
+
 fn prefer_ipv4(addrs: impl IntoIterator<Item = SocketAddr>) -> Vec<SocketAddr> {
     let all: Vec<SocketAddr> = addrs.into_iter().collect();
     let v4: Vec<SocketAddr> = all
@@ -177,6 +197,15 @@ fn prefer_ipv4(addrs: impl IntoIterator<Item = SocketAddr>) -> Vec<SocketAddr> {
 
 fn resolve_host_timed(host: &str, port: u16, timeout: Duration) -> Vec<SocketAddr> {
     let host_owned = host.to_string();
+    let key = (host.to_ascii_lowercase(), port);
+    if let Ok(g) = dns_cache().lock() {
+        if let Some(hit) = g.get(&key) {
+            if hit.at.elapsed() < DNS_CACHE_TTL {
+                return hit.addrs.clone();
+            }
+        }
+    }
+
     let label = format!("{host}:{port}");
     let (tx, rx) = std::sync::mpsc::channel();
     thread::spawn(move || {
@@ -186,24 +215,67 @@ fn resolve_host_timed(host: &str, port: u16, timeout: Duration) -> Vec<SocketAdd
             .unwrap_or_default();
         let _ = tx.send(addrs);
     });
-    match rx.recv_timeout(timeout) {
+    let addrs = match rx.recv_timeout(timeout) {
         Ok(addrs) => addrs,
         Err(_) => {
             log::warn!("DNS resolve timed out for {label} after {timeout:?}");
             Vec::new()
         }
+    };
+    if !addrs.is_empty() {
+        if let Ok(mut g) = dns_cache().lock() {
+            g.insert(
+                key,
+                DnsCacheEntry {
+                    addrs: addrs.clone(),
+                    at: Instant::now(),
+                },
+            );
+        }
     }
+    addrs
 }
 
-/// Resolve DNS once before the strategy loop — DNS is strategy-independent.
+
 pub fn resolve_diag_targets(targets: &[DiagTarget]) -> Vec<ResolvedTarget> {
     let t0 = Instant::now();
     let dns_budget = Duration::from_millis(1500);
+    let mut unique: Vec<(String, u16)> = Vec::new();
+    for target in targets {
+        let host = target.host.to_ascii_lowercase();
+        let pair = (host.clone(), target.port);
+        if !unique.iter().any(|u| u == &pair) {
+            unique.push(pair);
+        }
+        if target.https && target.port != 443 {
+            let https = (host, 443u16);
+            if !unique.iter().any(|u| u == &https) {
+                unique.push(https);
+            }
+        }
+    }
+
+    thread::scope(|scope| {
+        let handles: Vec<_> = unique
+            .iter()
+            .map(|(host, port)| {
+                let host = host.clone();
+                let port = *port;
+                scope.spawn(move || {
+                    let addrs = resolve_host_timed(&host, port, dns_budget);
+                    ((host, port), addrs)
+                })
+            })
+            .collect();
+        for h in handles {
+            let _ = h.join();
+        }
+    });
+
     let resolved: Vec<ResolvedTarget> = targets
         .iter()
         .map(|target| {
             let mut addrs = resolve_host_timed(target.host, target.port, dns_budget);
-            // Also resolve :443 for HTTPS hosts so resolve() has usable addrs.
             if target.https && target.port != 443 {
                 for a in resolve_host_timed(target.host, 443, dns_budget) {
                     if !addrs.contains(&a) {
@@ -218,8 +290,9 @@ pub fn resolve_diag_targets(targets: &[DiagTarget]) -> Vec<ResolvedTarget> {
         })
         .collect();
     log::info!(
-        "timing dns_resolve({} hosts): {:.0}ms",
+        "timing dns_resolve({} hosts, {} unique): {:.0}ms",
         targets.len(),
+        unique.len(),
         t0.elapsed().as_secs_f64() * 1000.0
     );
     resolved
@@ -309,8 +382,8 @@ fn probe_tcp_addrs_abortable(
     }
 }
 
-/// Soft QUIC/HTTP3 smoke: send a minimal UDP datagram to :443 and accept any reply.
-/// Not a full QUIC handshake — only detects wholesale UDP/443 blackholes.
+
+
 fn probe_udp_quic(host: &str, port: u16, pre: &[SocketAddr], timeout: Duration) -> ProbeResult {
     use std::net::UdpSocket;
 
@@ -343,9 +416,9 @@ fn probe_udp_quic(host: &str, port: u16, pre: &[SocketAddr], timeout: Duration) 
     let _ = sock.set_read_timeout(Some(slice));
     let _ = sock.set_write_timeout(Some(slice));
 
-    // Long enough to look unlike a tiny probe to some middleboxes; content is opaque.
+
     let mut req = [0u8; 64];
-    req[0] = 0xc0; // QUIC long-header-ish high bits
+    req[0] = 0xc0;
     for (i, b) in req[1..].iter_mut().enumerate() {
         *b = (0x5a ^ (i as u8)).wrapping_add(start.elapsed().as_nanos() as u8);
     }
@@ -379,7 +452,7 @@ fn probe_udp_quic(host: &str, port: u16, pre: &[SocketAddr], timeout: Duration) 
     }
 }
 
-/// Soft UDP smoke via STUN Binding Request — detects wholesale UDP blocks.
+
 fn probe_udp_stun(host: &str, port: u16, pre: &[SocketAddr], timeout: Duration) -> ProbeResult {
     use std::net::UdpSocket;
 
@@ -412,7 +485,7 @@ fn probe_udp_stun(host: &str, port: u16, pre: &[SocketAddr], timeout: Duration) 
     let _ = sock.set_read_timeout(Some(slice));
     let _ = sock.set_write_timeout(Some(slice));
 
-    // RFC 5389 Binding Request (header only).
+
     let mut req = [0u8; 20];
     req[0] = 0x00;
     req[1] = 0x01;
@@ -453,8 +526,8 @@ fn probe_udp_stun(host: &str, port: u16, pre: &[SocketAddr], timeout: Duration) 
     }
 }
 
-/// Parallel alt-port TCP with a shared deadline (discord.media 2053/2083/8443).
-/// Any open port counts as success; notes record which port answered.
+
+
 fn probe_tcp_ports_parallel(
     host: &str,
     ports: &[u16],
@@ -516,7 +589,7 @@ fn shared_https_client() -> &'static reqwest::blocking::Client {
 
 fn build_https_client(host: &str, addrs: &[SocketAddr], timeout: Duration) -> Result<reqwest::blocking::Client, String> {
     if addrs.is_empty() {
-        // Shared client is fine when we let the system resolver pick IPs.
+
         let _ = timeout;
         return Ok(shared_https_client().clone());
     }
@@ -529,7 +602,7 @@ fn build_https_client(host: &str, addrs: &[SocketAddr], timeout: Duration) -> Re
         .pool_max_idle_per_host(0)
         .user_agent("zapp/0.2");
 
-    // Map hostname → IPs so the URL keeps the real host (SNI/Host intact).
+
     let https_addrs: Vec<SocketAddr> = prefer_ipv4(
         addrs
             .iter()
@@ -552,7 +625,7 @@ pub fn probe_https(host: &str, timeout: Duration) -> ProbeResult {
 }
 
 fn probe_https_addrs(host: &str, addrs: &[SocketAddr], timeout: Duration) -> ProbeResult {
-    // Hostname in the URL (not a raw IP) so TLS SNI matches the real site.
+
     let url = format!("https://{host}/");
     let start = Instant::now();
     let client = match build_https_client(host, addrs, timeout) {
@@ -568,7 +641,7 @@ fn probe_https_addrs(host: &str, addrs: &[SocketAddr], timeout: Duration) -> Pro
         }
     };
 
-    // HEAD→GET only on Method Not Allowed / Not Implemented — never on timeout.
+
     let result = match client.head(&url).send() {
         Ok(resp) => {
             let code = resp.status().as_u16();
@@ -585,7 +658,7 @@ fn probe_https_addrs(host: &str, addrs: &[SocketAddr], timeout: Duration) -> Pro
         Ok(resp) => {
             let ms = start.elapsed().as_millis().min(u32::MAX as u128) as u32;
             let code = resp.status().as_u16();
-            // 2xx/3xx/4xx (incl. 301 with redirect::none) mean the host is reachable.
+
             let ok = code < 500;
             ProbeResult {
                 ok,
@@ -605,9 +678,9 @@ fn probe_https_addrs(host: &str, addrs: &[SocketAddr], timeout: Duration) -> Pro
     }
 }
 
-/// Fast adaptive matrix: TCP:443 gate, then HTTPS if TCP lives.
+
 pub fn probe_matrix_host(host: &str, timeout: Duration) -> Vec<ProbeResult> {
-    // Keep for Sites page: still TCP gate then HTTPS.
+
     let tcp_budget = timeout.min(Duration::from_millis(700));
     let tcp = probe_tcp(host, 443, tcp_budget);
     if !tcp.ok {
@@ -642,12 +715,12 @@ fn probe_matrix_resolved(
     }
 
     if !target.https {
-        // Soft STUN/UDP path (voice hint).
+
         if target.port == 3478 {
             let udp_budget = timeout.min(Duration::from_millis(700));
             return vec![probe_udp_stun(target.host, target.port, addrs, udp_budget)];
         }
-        // TCP-only (discord.media): try Flowseal alt ports in parallel.
+
         let ports: Vec<u16> = if target.port == 2053 {
             vec![2053, 2083, 8443]
         } else {
@@ -658,7 +731,7 @@ fn probe_matrix_resolved(
         return vec![tcp];
     }
 
-    // HTTPS targets: skip redundant TCP — one TLS is enough.
+
     let https_budget = if abort.is_some_and(|a| a.load(Ordering::Relaxed)) {
         timeout.min(Duration::from_millis(250))
     } else {
@@ -667,7 +740,7 @@ fn probe_matrix_resolved(
     vec![probe_https_addrs(target.host, addrs, https_budget)]
 }
 
-/// Probe hosts in parallel. Critical hosts first; soft hosts skipped if a critical fails.
+
 pub fn probe_targets_parallel(
     targets: &[DiagTarget],
     timeout: Duration,
@@ -715,7 +788,7 @@ pub fn probe_resolved_parallel(
                 }
                 let probes = probe_matrix_resolved(item, timeout, Some(&abort));
                 let host_ok = score_probes(&probes) >= 55 || probes.iter().any(|p| p.ok);
-                // Early-cancel siblings when a critical host is clearly down.
+
                 if !host_ok && probes.iter().all(|p| !p.ok) {
                     abort.store(true, Ordering::Relaxed);
                 }
@@ -789,7 +862,7 @@ pub fn probe_resolved_parallel(
         }
     }
 
-    // Preserve original order.
+
     let mut ordered = Vec::with_capacity(resolved.len());
     for item in resolved {
         if let Some(found) = out.iter().find(|(t, _)| t.host == item.target.host && t.port == item.target.port) {
@@ -815,7 +888,7 @@ fn latency_points(ms: u32) -> u32 {
     }
 }
 
-/// Multi-factor score 0–100: reachability × latency × protocol weight.
+
 pub fn score_probes(results: &[ProbeResult]) -> u32 {
     if results.is_empty() {
         return 0;
@@ -858,7 +931,7 @@ pub struct AdaptiveScore {
     pub all_probes: Vec<ProbeResult>,
 }
 
-/// Score by service. A strategy only "works" when every critical service passes.
+
 pub fn score_by_service(
     host_results: &[(DiagTarget, Vec<ProbeResult>)],
     pass_threshold: u32,
@@ -896,7 +969,7 @@ pub fn score_by_service(
             } else {
                 soft.iter().sum::<u32>() / soft.len() as u32
             };
-            // Soft CDN/UDP weighs more so ranking separates "site opens" vs "media works".
+
             let score = ((critical_floor * 75) + (soft_avg * 25)) / 100;
             ServiceScore {
                 service: service.into(),
@@ -921,7 +994,7 @@ pub fn score_by_service(
     }
 }
 
-/// Soft prior for strategy names — tie-break only, never overrides bad probes.
+
 pub fn strategy_prior_bonus(name: &str) -> i32 {
     let l = name.to_ascii_lowercase();
     if l.contains("fake tls auto") && !l.contains("alt") && !l.contains("exp") {
@@ -939,7 +1012,7 @@ pub fn rank_score(probe_score: u32, strategy_name: &str) -> u32 {
     rank_score_with_latency(probe_score, strategy_name, None)
 }
 
-/// Latency tier + soft CDN/UDP contribution for finer ranking.
+
 pub fn rank_score_with_latency(
     probe_score: u32,
     strategy_name: &str,
@@ -964,12 +1037,75 @@ pub fn rank_score_full(
             _ => -4,
         };
     }
-    // Soft path (CDN / UDP) breaks near-ties without overriding critical failures.
+
     adjusted += (soft_score as i32 / 20).min(5);
     adjusted.clamp(0, 100) as u32
 }
 
-/// Soft CDN / non-critical average contribution (0–100).
+
+pub fn path_verdict_from_results(host_results: &[(DiagTarget, Vec<ProbeResult>)]) -> PathVerdict {
+    let youtube_ok = host_results
+        .iter()
+        .filter(|(t, _)| t.critical && t.service == "youtube")
+        .all(|(_, probes)| probes.iter().any(|p| p.ok));
+    let discord_web_ok = host_results
+        .iter()
+        .filter(|(t, _)| {
+            t.critical && t.service == "discord" && !t.quic && t.port != 3478
+        })
+        .all(|(_, probes)| probes.iter().any(|p| p.ok));
+    let voice_probes: Vec<&ProbeResult> = host_results
+        .iter()
+        .filter(|(t, _)| {
+            !t.critical
+                && (t.port == 3478
+                    || t.quic
+                    || t.host.contains("stun")
+                    || probes_are_udp(t, host_results))
+        })
+        .flat_map(|(_, probes)| probes.iter())
+        .collect();
+
+    let discord_voice = if voice_probes.is_empty() {
+        AvailabilityStatus::Unknown
+    } else if voice_probes.iter().any(|p| p.ok) {
+        AvailabilityStatus::Available
+    } else {
+        AvailabilityStatus::Unavailable
+    };
+
+    PathVerdict {
+        youtube: if youtube_ok {
+            AvailabilityStatus::Available
+        } else {
+            AvailabilityStatus::Unavailable
+        },
+        discord_web: if discord_web_ok {
+            AvailabilityStatus::Available
+        } else {
+            AvailabilityStatus::Unavailable
+        },
+        discord_voice,
+    }
+}
+
+fn probes_are_udp(t: &DiagTarget, _all: &[(DiagTarget, Vec<ProbeResult>)]) -> bool {
+    t.port == 3478 || t.quic
+}
+
+
+pub fn watchdog_targets() -> Vec<DiagTarget> {
+    diag_targets()
+        .into_iter()
+        .filter(|t| {
+            t.critical
+                || t.port == 3478
+                || (t.quic && (t.host.contains("discord") || t.host.contains("youtube")))
+        })
+        .collect()
+}
+
+
 pub fn soft_contribution(host_results: &[(DiagTarget, Vec<ProbeResult>)]) -> u32 {
     let soft: Vec<u32> = host_results
         .iter()

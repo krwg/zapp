@@ -85,13 +85,13 @@ pub struct ManagedEngine {
 #[derive(Debug, Clone, Copy)]
 pub struct StartOpts {
     pub allow_elevate: bool,
-    /// Environment preflight (conflicts / WinDivert service). Skip during diag strategy loop.
+
     pub env_preflight: bool,
 }
 
 impl ManagedEngine {
     pub fn new(app_data: std::path::PathBuf, layout: EngineLayout) -> Self {
-        // Orphan cleanup only at process start — not on every Start.
+
         kill_orphan_winws();
         Self {
             app_data,
@@ -117,7 +117,7 @@ impl ManagedEngine {
         self.inner.lock().expect("engine lock").status.clone()
     }
 
-    /// Whether our managed winws child (local or via helper) is still alive.
+
     pub fn winws_alive(&self) -> bool {
         let via_helper = {
             let inner = self.inner.lock().expect("engine lock");
@@ -199,7 +199,7 @@ impl ManagedEngine {
         )
     }
 
-    /// Diagnostics strategy loop: strategy-only preflight, no orphan taskkill.
+
     pub fn start_diag(&self, strategy_override: Option<&str>) -> AppResult<EngineStatus> {
         self.start_inner(
             strategy_override,
@@ -217,8 +217,8 @@ impl ManagedEngine {
     ) -> AppResult<EngineStatus> {
         let t_all = Instant::now();
 
-        // Never drop a live Child without killing — profile switch / diag restart
-        // used to orphan winws and leave stop() unable to reclaim it.
+
+
         {
             let mut inner = self.inner.lock().expect("engine lock");
             inner.status = EngineStatus::Starting;
@@ -251,6 +251,24 @@ impl ManagedEngine {
             .map(str::to_string)
             .or_else(|| inner.active_strategy.clone())
             .unwrap_or_else(|| "general (FAKE TLS AUTO)".into());
+        let layout_root = inner.layout.root.clone();
+        let already_elevated = elevate::is_elevated();
+        drop(inner);
+
+        // Show UAC as early as possible — before preflight / strategy parse.
+        if !already_elevated && opts.allow_elevate {
+            let t_uac = Instant::now();
+            if let Err(fault) = crate::helper::ensure_helper(&self.app_data) {
+                let mut inner = self.inner.lock().expect("engine lock");
+                inner.status = EngineStatus::Error;
+                inner.last_error = Some(fault.message());
+                return Err(fault.into());
+            }
+            log::info!(
+                "timing start_inner.ensure_helper: {:.0}ms",
+                t_uac.elapsed().as_secs_f64() * 1000.0
+            );
+        }
 
         let scope = if opts.env_preflight {
             PreflightScope::Full
@@ -258,22 +276,24 @@ impl ManagedEngine {
             PreflightScope::Strategy
         };
         let t_pf = Instant::now();
-        let report = run_preflight_scoped(&inner.layout.root, &strategy, scope);
+        let report = run_preflight_scoped(&layout_root, &strategy, scope);
         log::info!(
             "timing start_inner.preflight: {:.0}ms",
             t_pf.elapsed().as_secs_f64() * 1000.0
         );
         if let Some(fault) = report.blocking_fault {
             log::warn!("preflight blocked start: {}", fault.log_line());
+            let mut inner = self.inner.lock().expect("engine lock");
             inner.status = EngineStatus::Error;
             inner.last_error = Some(fault.message());
             return Err(fault.into());
         }
 
-        let launch = match parse_strategy_bat(&inner.layout.root, &strategy) {
+        let launch = match parse_strategy_bat(&layout_root, &strategy) {
             Ok(l) => l,
             Err(e) => {
                 let fault = EngineFault::new(FaultCode::StrategyParseFailed, e.to_string());
+                let mut inner = self.inner.lock().expect("engine lock");
                 inner.status = EngineStatus::Error;
                 inner.last_error = Some(fault.message());
                 return Err(fault.into());
@@ -286,13 +306,13 @@ impl ManagedEngine {
             launch.winws.display()
         );
 
-        let already_elevated = elevate::is_elevated();
         if !already_elevated && !opts.allow_elevate {
             if crate::helper::helper_ping(&self.app_data).is_err() {
                 let fault = EngineFault::new(
                     FaultCode::DiagnosticsNeedsAdmin,
                     "Helper not running — press Start once to approve UAC",
                 );
+                let mut inner = self.inner.lock().expect("engine lock");
                 inner.status = EngineStatus::Error;
                 inner.last_error = Some(fault.message());
                 return Err(fault.into());
@@ -303,7 +323,6 @@ impl ManagedEngine {
         let winws = launch.winws.clone();
         let work_dir = launch.work_dir.clone();
         let args = launch.args.clone();
-        drop(inner);
 
         let t_spawn = Instant::now();
         let (start_res, via_helper) = if already_elevated {
@@ -319,7 +338,7 @@ impl ManagedEngine {
             }
             match cmd.spawn() {
                 Ok(mut child) => {
-                    // Bad args / driver fail show up quickly — poll instead of fixed sleeps.
+
                     let deadline = Instant::now() + Duration::from_millis(250);
                     let mut alive = true;
                     while Instant::now() < deadline {
@@ -421,7 +440,7 @@ impl ManagedEngine {
         }
     }
 
-    /// Stop owned winws and ask the elevated helper to shut down (Quit / update paths).
+
     pub fn shutdown_for_exit(&self) {
         let _ = self.stop();
         crate::helper::helper_shutdown(&self.app_data);
@@ -500,7 +519,7 @@ impl ManagedEngine {
         let local = child_alive(&mut inner.child);
         drop(inner);
 
-        // Only our owned process counts — a foreign Flowseal winws must not paint Bypass Running.
+
         let alive = if via_helper {
             match crate::helper::helper_status(&app_data) {
                 Ok(st) => st.running,
@@ -511,8 +530,8 @@ impl ManagedEngine {
         };
 
         let mut inner = self.inner.lock().expect("engine lock");
-        // Never promote Stopped→Running from OS scans (foreign Flowseal must not paint Bypass).
-        // Only demote when our owned process/helper child is gone.
+
+
         let _ = (local, via_helper);
         if !alive && matches!(inner.status, EngineStatus::Running) {
             inner.status = EngineStatus::Stopped;

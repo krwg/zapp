@@ -1,4 +1,4 @@
-# Architecture
+# Architecture (0.2.7)
 
 ```
 UI (React)
@@ -8,7 +8,8 @@ UI (React)
       → ManagedEngine        # starts/stops hidden winws
       → elevated helper      # one UAC, then silent local control
       → UpdateManager        # Application / Engine / Strategies
-      → Diagnostics          # Smart check probes
+      → Diagnostics          # Smart check probes + progress events
+      → Watchdog             # quiet path recheck while bypass is on
 ```
 
 ## Engine resolve order
@@ -25,42 +26,63 @@ The source repo does **not** ship WinDivert / `winws`. End-user packs are downlo
 
 ## Helper
 
-- Binary: `%LOCALAPPDATA%\zapp\zapp-helper.exe` (copy of the elevated helper)
-- IPC: Windows named pipe `\\.\pipe\zapp-helper` (no TCP listen; token still required)
+- Binary: `%LOCALAPPDATA%\zapp\zapp-helper.exe` (staged copy of the elevated helper; skip copy when size/mtime already match)
+- IPC: Windows named pipe `\\.\pipe\zapp-helper` (no TCP listen; token required; Medium-IL ACL so unelevated UI can connect)
 - Auth: token file `%LOCALAPPDATA%\zapp\helper.token`
 - Starts / stops `winws` after the user approved UAC once
 - Path allowlist: managed packs under AppData or ProgramData (`bin` or pack-root cwd)
 - `InstallEngine`: copies a staged AppData pack into ProgramData and applies ACL
+- Cold Start path: `ensure_helper` (UAC) runs **before** full preflight when elevation is allowed; dead-pipe probes use a short timeout
+
+## Product surfaces (0.2.7)
+
+| Piece | Role |
+|-------|------|
+| Path verdict strip | Separate YouTube HTTPS / Discord web / Discord voice UDP honesty on Home |
+| Recent working modes | Persist last good strategies in `session.json`; one-click re-apply + network restore |
+| Conflict shield | Surface competing bypass images before Start |
+| First-run wizard | Engine → UAC → Smart check guided flow |
+| Quiet watchdog | Interval soft recheck; toast; optional auto re-check (Settings) |
+| Locale-aware faults | `set_ui_locale` → EN/RU catalogs in `engine/faults.rs` |
 
 ## Update channels
 
 | Channel | Source |
 |---------|--------|
-| Application | [krwg/zapp](https://github.com/krwg/zapp/releases) |
+| Application | [krwg/zapp](https://github.com/krwg/zapp/releases) · minisign `.sig` |
 | Engine | Flowseal GitHub Releases (zip) → stage in AppData, prefer elevated ProgramData install |
 | Strategies | Same Flowseal pack (profiles from `general*.bat`) |
+
+Authenticode: not currently applied — see [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md).
 
 ## Data on disk
 
 | Path | Contents |
 |------|----------|
 | `%ProgramData%\zapp\` | Preferred engine packs (ACL: SYSTEM/Admins full, Users RX) |
-| `%APPDATA%\app.zapp.desktop\` | Settings (`settings.json`), session (`session.json` bypass desired), downloads/staging, fallback engine packs, logs |
+| `%APPDATA%\app.zapp.desktop\` | Settings (`settings.json`), session (`session.json`: bypass desired, working modes), downloads/staging, fallback engine packs, logs |
 | `%LOCALAPPDATA%\zapp\` | Helper exe + token |
 
-## Bypass restore (roadmap §5) + network memory (§7)
+## Bypass restore + network memory
 
-- `session.json` remembers `bypassDesired` + active strategy (set on Start, cleared on Stop / tray Quit).
+- `session.json` remembers `bypassDesired` + active strategy (set on Start, cleared on Stop / tray Quit) and recent working modes.
 - After engine bootstrap at login: if `restoreBypassOnLogin` → `ensure_helper` + start.
 - Background wall-clock watcher: gap &gt; 25s ≈ sleep resume → if `restoreBypassOnResume` → start again.
-- Network fingerprint = default IPv4 gateway + WLAN SSID; on change (if `restoreBypassOnNetworkChange`) restore bypass.
+- Network fingerprint = default IPv4 gateway + WLAN SSID; on change (if `restoreBypassOnNetworkChange`) restore bypass and invalidate DNS probe cache.
 
-## Smart check probes (§6)
+## Smart check / probes
 
 - Critical HTTPS (YouTube / Discord gateway / discord.media TCP alts).
-- Soft: ytimg, youtubei.googleapis.com, **googlevideo.com**, Discord CDN, STUN UDP, **QUIC UDP:443** smoke (reply-based, does not alone fail a mode).
+- Soft: ytimg, youtubei.googleapis.com, googlevideo.com, Discord CDN, STUN UDP, QUIC UDP:443 smoke (reply-based, does not alone fail a mode).
+- DNS: parallel resolve + in-process host cache; `invalidate_dns_cache` on network change.
+- Progress: `diagnostics:progress` / `diagnostics:completed` events for live UI without full snapshot storms.
 
-## Elevation (P2)
+## Snapshot / idle
+
+- `get_snapshot` throttles helper/OS status refresh (~8s) and conflict ToolHelp scans (~12s).
+- UI idle poll is lighter; transitional Start/Stop still merges carefully.
+
+## Elevation
 
 - Helper / installer / winws UAC via `ShellExecuteExW` `runas` (`win32.rs`) — no PowerShell.
 - `is_elevated` via process token (`TokenElevation`), not `net session`.
@@ -85,6 +107,11 @@ The source repo does **not** ship WinDivert / `winws`. End-user packs are downlo
 
 - IPC: `get_bug_report_bundle` (+ ACL in `capabilities/default.json`).
 - Issue body includes environment, recent errors, and recent history log.
+
+## Landing (GitHub Pages)
+
+- Static site under `docs/` (`index.html`, `site.css`, `site.js`) — hero-only, theme + EN/RU, mobile menu.
+- Homepage: https://krwg.github.io/zapp/
 
 ## Stack
 

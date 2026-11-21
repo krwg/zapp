@@ -14,6 +14,7 @@ mod persist;
 mod state;
 mod tray;
 mod util;
+mod watchdog;
 #[cfg(windows)]
 mod win32;
 
@@ -39,6 +40,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![ARG_MINIMIZED]),
         ))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .on_window_event(|window, event| {
             if window.label() != "main" {
                 return;
@@ -113,8 +115,8 @@ pub fn run() {
                 }
             }
 
-            // First-run repair: Flowseal is not embedded in the installer.
-            // Always ensure sidecars / download pack ASAP (don't wait for Updates UI).
+
+
             {
                 let handle = app.handle().clone();
                 std::thread::spawn(move || {
@@ -129,7 +131,7 @@ pub fn run() {
                         Ok(false) => log::info!("Flowseal engine pack OK"),
                         Err(e) => log::warn!("engine bootstrap failed: {e}"),
                     }
-                    // Roadmap §5: restore bypass after login once pack is ready.
+
                     let _ = state.try_restore_bypass("login");
                 });
             }
@@ -141,7 +143,7 @@ pub fn run() {
                     let Some(state) = handle.try_state::<AppState>() else {
                         return;
                     };
-                    match state.check_updates_and_auto_install(auto_install) {
+                    match state.check_updates_and_auto_install_with_app(&handle, auto_install) {
                         Ok(true) => {
                             log::info!("application installer launched — exiting for update");
                             let _ = handle.emit("app:quit-for-update", ());
@@ -157,7 +159,9 @@ pub fn run() {
                 });
             }
 
-            // §5 resume (wall-clock gap) + §7 network memory (gateway/SSID change).
+            watchdog::spawn_watchdog(app.handle().clone());
+
+
             {
                 let handle = app.handle().clone();
                 std::thread::spawn(move || {
@@ -185,7 +189,7 @@ pub fn run() {
                             continue;
                         };
 
-                        // Poll is frozen during sleep; a large wall gap means resume.
+
                         if gap > Duration::from_secs(25) {
                             std::thread::sleep(Duration::from_secs(2));
                             let _ = state.try_restore_bypass("resume");
@@ -215,6 +219,7 @@ pub fn run() {
                             crate::persist::save_session(state.engine.app_data(), &session);
                             last_net = key;
                             std::thread::sleep(Duration::from_secs(2));
+                            crate::engine::invalidate_dns_cache();
                             if state.try_restore_bypass("network") {
                                 let _ = handle.emit("engine:restored", ());
                             }
@@ -247,6 +252,9 @@ pub fn run() {
             commands::get_recent_errors,
             commands::get_bug_report_bundle,
             commands::import_engine_pack,
+            commands::apply_working_mode,
+            commands::resolve_conflicts,
+            commands::get_conflicts,
         ])
         .build(tauri::generate_context!())
         .expect("error while building zapp")

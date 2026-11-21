@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>zapp — quiet Windows bypass for YouTube &amp; Discord</title>
+    <meta
+      name="description"
+      content="Soft-minimal Windows client for YouTube and Discord access via the Flowseal zapret engine. Smart check, tray, independent updates."
+    />
+    <meta property="og:title" content="zapp" />
+    <meta
+      property="og:description"
+      content="Quiet Windows client for YouTube &amp; Discord. Smart check finds a mode that works on your ISP."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://krwg.github.io/zapp/" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="canonical" href="https://krwg.github.io/zapp/" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./site.css" />
+  </head>
+  <body>
+    <div class="atmosphere" aria-hidden="true"></div>
+
+    <header class="top">
+      <a class="brand" href="./">zapp</a>
+      <nav class="nav" aria-label="Primary">
+        <button type="button" class="btn ghost sm" id="theme-toggle" aria-label="Toggle theme">
+          Theme
+        </button>
+        <button type="button" class="btn ghost sm" id="lang-toggle" aria-label="Toggle language">
+          EN
+        </button>
+        <a class="btn ghost sm" data-i18n="navGithub" href="https://github.com/krwg/zapp"
+          >GitHub</a
+        >
+        <a
+          class="btn primary sm"
+          data-i18n="navDownload"
+          href="https://github.com/krwg/zapp/releases/latest"
+          >Download</a
+        >
+      </nav>
+      <button
+        type="button"
+        class="menu-btn"
+        id="menu-toggle"
+        aria-expanded="false"
+        aria-controls="mobile-menu"
+        aria-label="Menu"
+      >
+        <span></span><span></span>
+      </button>
+    </header>
+
+    <div class="mobile-menu" id="mobile-menu" hidden>
+      <button type="button" class="btn ghost sm" id="theme-toggle-m">Theme</button>
+      <button type="button" class="btn ghost sm" id="lang-toggle-m">EN</button>
+      <a class="btn ghost sm" data-i18n="navGithub" href="https://github.com/krwg/zapp">GitHub</a>
+      <a
+        class="btn primary sm"
+        data-i18n="navDownload"
+        href="https://github.com/krwg/zapp/releases/latest"
+        >Download</a
+      >
+    </div>
+
+    <main>
+      <section class="hero">
+        <p class="brand-hero">zapp</p>
+        <h1 data-i18n="heroTitle">Quiet Windows bypass for YouTube &amp; Discord</h1>
+        <p class="lede" data-i18n="heroLede">
+          Soft-minimal client on the Flowseal engine. One Smart check finds a working mode —
+          then it stays out of the way in the tray.
+        </p>
+        <div class="cta">
+          <a
+            class="btn primary lg"
+            data-i18n="ctaDownload"
+            href="https://github.com/krwg/zapp/releases/latest"
+            >Get for Windows</a
+          >
+          <a class="btn secondary lg" data-i18n="ctaSource" href="https://github.com/krwg/zapp"
+            >View source</a
+          >
+        </div>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <span>© zapp · krwg</span>
+      <a href="https://github.com/krwg/zapp">github.com/krwg/zapp</a>
+    </footer>
+
+    <script src="./site.js" defer></script>
+  </body>
+</html>

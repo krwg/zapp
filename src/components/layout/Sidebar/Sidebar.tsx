@@ -34,7 +34,7 @@ interface SidebarProps {
   appVersion: string
   engineStatus: EngineStatus
   connection: ConnectionState
-  /** Hide the bypass chip on Home — the large card already shows status. */
+  
   hideStatus?: boolean
 }
 
@@ -147,3 +147,4 @@ export function Sidebar({ appVersion, engineStatus, connection, hideStatus }: Si
     </aside>
   )
 }
+

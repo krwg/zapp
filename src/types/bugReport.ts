@@ -19,7 +19,7 @@ export interface AboutLocationState {
   bugPrefill?: BugReportPrefill
 }
 
-/** Auto-collected tech context for GitHub issue body (developer-facing). */
+
 export interface BugReportBundle {
   appVersion: string
   engineVersion: string
@@ -32,3 +32,4 @@ export interface BugReportBundle {
   recentErrors: string[]
   recentLog: string[]
 }
+

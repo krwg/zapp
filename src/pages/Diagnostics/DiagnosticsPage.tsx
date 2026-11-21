@@ -5,6 +5,7 @@
 import { useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { DiagnosticProgress } from '@/components/domain/DiagnosticProgress/DiagnosticProgress'
+import { PathVerdictStrip } from '@/components/domain/PathVerdictStrip/PathVerdictStrip'
 import { PageHeader } from '@/components/layout/PageHeader/PageHeader'
 import { Button } from '@/components/ui/Button/Button'
 import { Hint } from '@/components/ui/Hint/Hint'
@@ -68,6 +69,10 @@ export function DiagnosticsPage() {
           onStart={() => void startDiagnostics()}
           onCancel={() => void cancelDiagnostics()}
         />
+
+        {diagnosticsLive.pathVerdict && (
+          <PathVerdictStrip verdict={diagnosticsLive.pathVerdict} />
+        )}
 
         <section className={styles.results}>
           <div className={styles.resultsHead}>
@@ -189,6 +194,9 @@ export function DiagnosticsPage() {
                                 </div>
                               ))}
                             </div>
+                          ) : null}
+                          {row.pathVerdict ? (
+                            <PathVerdictStrip verdict={row.pathVerdict} compact />
                           ) : null}
                           {row.notes ? (
                             <p className={styles.notesFull}>

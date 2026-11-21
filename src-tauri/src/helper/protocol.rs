@@ -19,7 +19,7 @@ pub enum HelperRequest {
     },
     Stop { token: String },
     Reset { token: String },
-    /// Copy a staged pack from AppData into `%ProgramData%\zapp\engine\<ver>` and lock ACL.
+
     InstallEngine {
         token: String,
         version: String,

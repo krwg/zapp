@@ -78,6 +78,7 @@ export interface SystemInfo {
   lastUpdateCheckAt: string | null
   autoUpdateEnabled: boolean
   elevated: boolean
+  engineInstalled: boolean
 }
 
 export interface DiagnosticHostDetail {
@@ -96,6 +97,25 @@ export interface DiagnosticServiceScore {
   latencyMs: number | null
 }
 
+export interface PathVerdict {
+  youtube: AvailabilityStatus
+  discordWeb: AvailabilityStatus
+  discordVoice: AvailabilityStatus
+}
+
+export interface WorkingModeEntry {
+  strategyName: string
+  score: number
+  softScore: number
+  networkKey: string | null
+  testedAt: string
+}
+
+export interface ConflictInfo {
+  images: string[]
+  detail: string
+}
+
 export interface DiagnosticStrategyResult {
   id: string
   name: string
@@ -110,6 +130,7 @@ export interface DiagnosticStrategyResult {
   hosts: DiagnosticHostDetail[]
   notes: string
   testedAt: string
+  pathVerdict?: PathVerdict | null
 }
 
 export interface DiagnosticRun {
@@ -124,6 +145,7 @@ export interface DiagnosticRun {
   finishedAt: string | null
   results: DiagnosticStrategyResult[]
   isDemo: boolean
+  pathVerdict?: PathVerdict | null
 }
 
 export interface UpdateChannel {
@@ -153,6 +175,12 @@ export interface AppSettings {
   autoDiagnostics: boolean
   diagnosticsIntervalHours: number
   diagnosticsMode: DiagnosticsMode
+  watchdogIntervalMinutes: number
+  watchdogEnabled: boolean
+  watchdogAutoRecheck: boolean
+  reapplyWorkingModeOnNetworkChange: boolean
+  wizardCompleted: boolean
+  uiLocale: string
   networkTimeoutMs: number
   networkRetries: number
   advancedLogging: boolean
@@ -179,4 +207,6 @@ export interface AppSnapshot {
   updates: UpdateChannel[]
   settings: AppSettings
   about: AppAbout
+  workingModes: WorkingModeEntry[]
+  conflicts: ConflictInfo | null
 }

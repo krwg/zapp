@@ -61,7 +61,7 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
             }
             "quit" => {
                 if let Some(state) = app.try_state::<AppState>() {
-                    // Explicit Quit: do not auto-restore on next login.
+
                     state.clear_bypass_desired();
                     state.engine.shutdown_for_exit();
                 }

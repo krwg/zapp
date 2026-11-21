@@ -12,7 +12,7 @@ Run a DPI-bypass strategy for YouTube and Discord without a console window.
 [![License](https://img.shields.io/badge/license-MIT-555?style=flat-square&labelColor=0a0a0a)](LICENSE)
 ![Windows 10/11](https://img.shields.io/badge/Windows-10%2F11%20x64-0078D6?style=flat-square&labelColor=0a0a0a)
 
-[English](README.md) · [Русский](README.ru.md) · [Releases](https://github.com/krwg/zapp/releases)
+[English](README.md) · [Русский](README.ru.md) · [Site](https://krwg.github.io/zapp/) · [Releases](https://github.com/krwg/zapp/releases)
 
 <img src="docs/screenshots/01-overview.png" alt="zapp Home" width="860" />
 
@@ -22,7 +22,7 @@ I made zapp because I was tired of launching BAT files with a console window you
 
 zapp wraps zapret and the [Flowseal strategy pack](https://github.com/Flowseal/zapret-discord-youtube) in a small Tauri app. Press Start on the **Bypass** card, approve UAC once, and `winws` runs hidden in the background.
 
-**Smart check** (Fast by default, Thorough optional) tries strategies against YouTube and Discord across several endpoints (site, gateway, media, image CDN, soft UDP smoke) and turns on a mode that passes both services. From **0.2.4** the loop is much faster; **0.2.5** hardens the engine lifecycle. **0.2.6** keeps that lifecycle and adds trust hardening (helper path allowlist, ProgramData engine + ACL, installer SHA256), plain-language errors with one-click bug reports, Markdown release notes, and a smarter Smart check ranking. Home keeps site cards grey until a fresh probe.
+**0.2.7** is the product leap after the 0.2.6 trust slice: **path verdicts** (YouTube / Discord web / Discord voice called out separately), **recent working modes**, a **quiet watchdog**, a **first-run wizard**, **conflict shield**, EN/RU fault text that matches the UI language, a faster Start→UAC path, and a minimal [landing page](https://krwg.github.io/zapp/). Smart check stays Fast-by-default with Thorough optional; Home stays honest when voice UDP still fails.
 
 The app, engine and strategies update separately. English and Russian UI, light/dark themes, tray support.
 
@@ -31,18 +31,18 @@ zapp is not a VPN. Your IP stays visible and nothing is encrypted; the only thin
 ## Install
 
 1. Download `zapp_*_x64-setup.exe` from [Releases](https://github.com/krwg/zapp/releases/latest) and install it.
-2. Open zapp, press **Start** on Bypass, approve the UAC prompt.
+2. Open zapp (first run may show a short wizard), press **Start** on Bypass, approve the UAC prompt.
 3. Wait while the engine pack downloads, then run **Smart check**.
 
 Windows 10/11 x64. Admin rights are needed once, to start the helper.
 
-The NSIS `setup.exe` is the one I recommend: on a reinstall it can wipe the old app data. The `.msi` works too but has no cleanup page. SHA256 sums are in each release.
+The NSIS `setup.exe` is the one I recommend: on a reinstall it can wipe the old app data. The `.msi` works too but has no cleanup page. SHA256 sums are in each release. Installers are currently **not Authenticode-signed** (see [code signing policy](docs/CODE_SIGNING_POLICY.md)); SmartScreen may warn — verify the hash or build from source.
 
 ## What it does on your machine
 
-`winws` uses [WinDivert](https://reqrypt.org/windivert.html), which loads a kernel driver, so it needs admin rights. zapp starts one elevated helper, `zapp-helper.exe`, and talks to it over a token-authenticated **named pipe** (`\\.\pipe\zapp-helper`). That stays on the local machine — no TCP listen port.
+`winws` uses [WinDivert](https://reqrypt.org/windivert.html), which loads a kernel driver, so it needs admin rights. zapp starts one elevated helper, `zapp-helper.exe`, and talks to it over a token-authenticated **named pipe** (`\\.\pipe\zapp-helper`) with a Medium-IL ACL so the unelevated UI can still connect. That stays on the local machine — no TCP listen port.
 
-On first run, and when Engine or Strategies update, zapp downloads the Flowseal pack from GitHub. New installs prefer `%ProgramData%\zapp\engine\` (elevated helper + locked ACL); older / fallback packs stay under `%APPDATA%\app.zapp.desktop\engine\`. App updates come from [krwg/zapp](https://github.com/krwg/zapp/releases). Apart from GitHub release checks and the site probes you start yourself, zapp makes no other requests. There is no telemetry. Settings and logs stay in `%APPDATA%\app.zapp.desktop\`, helper state in `%LOCALAPPDATA%\zapp\`.
+On first run, and when Engine or Strategies update, zapp downloads the Flowseal pack from GitHub. New installs prefer `%ProgramData%\zapp\engine\` (elevated helper + locked ACL); older / fallback packs stay under `%APPDATA%\app.zapp.desktop\engine\`. App updates come from [krwg/zapp](https://github.com/krwg/zapp/releases) and are checked with minisign. Apart from GitHub release checks and the site probes you start yourself, zapp makes no other requests. There is no telemetry. Settings and logs stay in `%APPDATA%\app.zapp.desktop\`, helper state in `%LOCALAPPDATA%\zapp\`.
 
 Antivirus and SmartScreen sometimes flag WinDivert-based tools, because a packet-filter driver looks suspicious by nature. The source is open, so you can check the installer's SHA256 or build it yourself.
 
@@ -50,17 +50,16 @@ Antivirus and SmartScreen sometimes flag WinDivert-based tools, because a packet
 
 Short version before you install:
 
-- As of **0.2.6**, Smart check still requires both YouTube and Discord and ranks modes with critical + soft scores (CDN / STUN). Probes are **TCP/HTTPS plus a soft UDP smoke test**, not a real client — voice can still fail while Sites look green.
-- From **0.2.4+** the check is much faster and steadier; if something still feels off afterwards, open **Modes** and pick a strategy by hand.
-- First launch needs GitHub access to download the engine pack. There is no offline pack picker in the UI yet.
-- Closing the window hides to the tray by default; the process is still running. **Quit from the tray** before reinstalling (0.2.5 also stops `winws`/helper on Quit), or the setup cannot replace `zapp.exe`.
+- Smart check and path verdicts use **TCP/HTTPS plus soft UDP smoke**, not a real Discord/YouTube client — voice can still fail while web looks green (0.2.7 surfaces that gap on purpose).
+- First launch needs GitHub access to download the engine pack (Updates also has zip import). There is no full offline pack browser yet.
+- Closing the window hides to the tray by default; the process is still running. **Quit from the tray** before reinstalling (Quit also stops `winws`/helper), or the setup cannot replace `zapp.exe`.
 - Windows 10/11 x64 only. No macOS or Linux build.
 
 ## If something doesn't work
 
-If SmartScreen blocks the installer, choose *More info → Run anyway*, or verify the SHA256 first. If no strategy passes Smart check, close other zapret, VPN or DPI tools and run it again. If a Flowseal `.bat` left `winws.exe` running, stop it first — Smart check will tell you.
+If SmartScreen blocks the installer, choose *More info → Run anyway*, or verify the SHA256 first. If no strategy passes Smart check, close other zapret, VPN or DPI tools (Conflict shield will name common ones) and run it again. If a Flowseal `.bat` left `winws.exe` running, stop it first — Smart check will tell you.
 
-To remove zapp completely, uninstall it and accept the cleanup prompt. By hand, delete `%APPDATA%\app.zapp.desktop` and `%LOCALAPPDATA%\zapp`.
+To remove zapp completely, uninstall it and accept the cleanup prompt. By hand, delete `%APPDATA%\app.zapp.desktop`, `%LOCALAPPDATA%\zapp`, and optionally `%ProgramData%\zapp`.
 
 ## Build from source
 
@@ -70,7 +69,7 @@ npm run tauri:dev     # desktop app
 npm run tauri:build   # NSIS + MSI
 ```
 
-You need the Rust toolchain and MSVC Build Tools. Architecture notes are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+You need the Rust toolchain and MSVC Build Tools. Architecture notes are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Release notes: [RELEASE_0.2.7.md](RELEASE_0.2.7.md).
 
 ## Credits
 

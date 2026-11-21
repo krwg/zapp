@@ -2,9 +2,30 @@
 // ║                  engine/faults                   ║
 // ╚════════════════════════════════════════════════════╝
 
+use std::sync::atomic::{AtomicU8, Ordering};
+
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
+
+const LOCALE_EN: u8 = 0;
+const LOCALE_RU: u8 = 1;
+
+static UI_LOCALE: AtomicU8 = AtomicU8::new(LOCALE_EN);
+
+
+pub fn set_ui_locale(locale: &str) {
+    let v = if locale.eq_ignore_ascii_case("ru") {
+        LOCALE_RU
+    } else {
+        LOCALE_EN
+    };
+    UI_LOCALE.store(v, Ordering::Relaxed);
+}
+
+fn ui_is_ru() -> bool {
+    UI_LOCALE.load(Ordering::Relaxed) == LOCALE_RU
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -24,7 +45,7 @@ pub enum FaultCode {
     StopFailed,
     EngineNotInstalled,
     DiagnosticsNeedsAdmin,
-    /// Helper refused the launch (path / policy). Detail is for logs only.
+
     LaunchRefused,
     Unknown,
 }
@@ -51,12 +72,12 @@ impl EngineFault {
         }
     }
 
-    /// Short user-facing text for toasts / UI (no raw paths or internal refusal strings).
+
     pub fn message(&self) -> String {
         format!("{} — {}", self.title, self.hint)
     }
 
-    /// Full line for logs / history (includes technical detail).
+
     pub fn log_line(&self) -> String {
         format!(
             "[{:?}] {} | detail={} | hint={}",
@@ -75,6 +96,104 @@ impl From<EngineFault> for AppError {
 }
 
 fn catalog(code: &FaultCode) -> (&'static str, &'static str, bool) {
+    if ui_is_ru() {
+        catalog_ru(code)
+    } else {
+        catalog_en(code)
+    }
+}
+
+fn catalog_en(code: &FaultCode) -> (&'static str, &'static str, bool) {
+    match code {
+        FaultCode::WinwsBinaryMissing => (
+            "Bypass binary missing",
+            "Open Updates → Engine and reinstall the pack.",
+            false,
+        ),
+        FaultCode::WinDivertDriverMissing => (
+            "Driver files missing",
+            "Reinstall Engine from Updates.",
+            false,
+        ),
+        FaultCode::StrategyBatMissing => (
+            "Strategy not found",
+            "Pick another mode or update Strategies.",
+            true,
+        ),
+        FaultCode::StrategyParseFailed => (
+            "Could not read strategy",
+            "Try another mode or update Strategies.",
+            true,
+        ),
+        FaultCode::StrategyPayloadMissing => (
+            "Strategy files missing",
+            "Update Engine or Strategies from Updates.",
+            false,
+        ),
+        FaultCode::UacCancelled => (
+            "Administrator prompt declined",
+            "Turn bypass on again and accept the Windows admin prompt.",
+            true,
+        ),
+        FaultCode::UacLaunchFailed => (
+            "Could not get administrator rights",
+            "Accept the admin prompt. If no window appears, check antivirus or restart zapp.",
+            true,
+        ),
+        FaultCode::WinwsExitedImmediately => (
+            "Bypass did not start",
+            "Close other VPN/bypass tools and try again. If it repeats, report the bug.",
+            true,
+        ),
+        FaultCode::WinDivertConflict => (
+            "Conflict with another bypass",
+            "Stop other bypass tools, reset the engine, then turn bypass on again.",
+            true,
+        ),
+        FaultCode::AccessDenied => (
+            "Access denied",
+            "Accept the administrator prompt when turning bypass on.",
+            true,
+        ),
+        FaultCode::ConflictingBypass => (
+            "Another bypass is already running",
+            "Close parallel bypass tools and try again.",
+            true,
+        ),
+        FaultCode::LikelyBlockedByAv => (
+            "Antivirus may be blocking",
+            "Add the Engine folder to antivirus exclusions and try again.",
+            true,
+        ),
+        FaultCode::StopFailed => (
+            "Could not stop",
+            "Turn bypass off again or reset the engine.",
+            true,
+        ),
+        FaultCode::EngineNotInstalled => (
+            "Engine not installed",
+            "Open Updates → Engine and install the pack.",
+            false,
+        ),
+        FaultCode::DiagnosticsNeedsAdmin => (
+            "Administrator rights required for the check",
+            "Turn bypass on once (accept the admin prompt), then run the check again.",
+            true,
+        ),
+        FaultCode::LaunchRefused => (
+            "Could not start bypass",
+            "Check Engine in Updates and try again. If it repeats, report the bug.",
+            true,
+        ),
+        FaultCode::Unknown => (
+            "Action failed",
+            "Try again. If it keeps happening, use Report a bug.",
+            true,
+        ),
+    }
+}
+
+fn catalog_ru(code: &FaultCode) -> (&'static str, &'static str, bool) {
     match code {
         FaultCode::WinwsBinaryMissing => (
             "Не найден файл обхода",

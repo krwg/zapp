@@ -12,16 +12,33 @@ use crate::model::AppSettings;
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionState {
-    /// User wants bypass on across reboot / sleep (cleared on explicit Stop / Quit).
+
     #[serde(default)]
     pub bypass_desired: bool,
     #[serde(default)]
     pub active_strategy: Option<String>,
-    /// Last seen `gateway|ssid` fingerprint (§7 network memory).
+
     #[serde(default)]
     pub network_key: Option<String>,
+
+    #[serde(default)]
+    pub working_modes: Vec<crate::model::WorkingModeEntry>,
     #[serde(default)]
     pub updated_at: Option<String>,
+}
+
+const MAX_WORKING_MODES: usize = 3;
+
+pub fn push_working_mode(
+    app_data: &Path,
+    entry: crate::model::WorkingModeEntry,
+) {
+    let mut session = load_session(app_data);
+    session.working_modes.retain(|e| e.strategy_name != entry.strategy_name);
+    session.working_modes.insert(0, entry);
+    session.working_modes.truncate(MAX_WORKING_MODES);
+    session.updated_at = Some(crate::util::now_iso());
+    save_session(app_data, &session);
 }
 
 fn settings_path(app_data: &Path) -> PathBuf {

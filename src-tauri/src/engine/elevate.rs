@@ -17,7 +17,7 @@ pub fn is_elevated() -> bool {
     }
 }
 
-/// Quote a single Windows command-line argument (CommandLineToArgvW-compatible-ish).
+
 fn quote_arg(arg: &str) -> String {
     if arg.is_empty() {
         return "\"\"".into();
@@ -58,8 +58,8 @@ fn join_args(args: &[String]) -> String {
     args.iter().map(|a| quote_arg(a)).collect::<Vec<_>>().join(" ")
 }
 
-/// Direct elevated winws launch (ShellExecuteEx). Normal Start goes through the helper pipe;
-/// kept for diagnostics / fallback callers.
+
+
 #[allow(dead_code)]
 pub fn start_winws_elevated(
     winws: &Path,

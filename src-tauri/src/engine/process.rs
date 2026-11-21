@@ -1,11 +1,9 @@
 // ╔════════════════════════════════════════════════════╗
 // ║                  engine/process                  ║
 // ╚════════════════════════════════════════════════════╝
-//! Fast process lookup via ToolHelp (~1ms). Avoid tasklist/taskkill on hot paths.
-
 use std::time::Instant;
 
-/// True if an image with this name is running (case-insensitive).
+
 pub fn process_running(image: &str) -> bool {
     #[cfg(windows)]
     {
@@ -18,7 +16,7 @@ pub fn process_running(image: &str) -> bool {
     }
 }
 
-/// True if a specific PID is still alive.
+
 pub fn process_pid_running(pid: u32) -> bool {
     #[cfg(windows)]
     {
@@ -31,7 +29,7 @@ pub fn process_pid_running(pid: u32) -> bool {
     }
 }
 
-/// Force-terminate every process matching `image`. Prefer Child::kill on owned processes.
+
 pub fn kill_image(image: &str) {
     let t0 = Instant::now();
     #[cfg(windows)]

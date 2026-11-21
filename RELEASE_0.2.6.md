@@ -21,14 +21,9 @@ Stable 0.2.5 engine lifecycle, plus trust hardening, clearer errors, richer Smar
 
 - **ProgramData engine + ACL** — Engine installs prefer `%ProgramData%\zapp\engine\` via elevated helper (`InstallEngine`); SYSTEM/Admins full, Users read/execute. Falls back to AppData if UAC is declined.
 - **Helper path allowlist** — elevated helper only starts managed `winws` under AppData or ProgramData packs.
-- **Named pipe helper** — `\\.\pipe\zapp-helper` (no TCP listen).
-- **Bypass restore** — login / sleep resume / network change (Settings toggles).
 - **Safer Application installs** — SHA256 check against published digest / notes before launch; engine zips get a sanity check.
-- **Smarter Smart check** — YouTube/Discord endpoints (www, ytimg, youtubei, googlevideo, Discord CDN, soft STUN/QUIC), Fast stops on a strong pass.
-- **Report a bug** — auto diagnostics block (versions, engine path, recent errors + log) for GitHub; Markdown tables in release notes.
-- **Offline engine zip** — Updates → Import zip (native picker).
-- **GitHub mirrors** — env `ZAPP_GITHUB_API_BASE` / `ZAPP_GITHUB_API_MIRRORS` / `ZAPP_GITHUB_ASSET_PREFIX`.
-- **Win32 elevate** — ShellExecuteEx + TokenElevation; pack N−1 cleanup; CSP; conflict list; `ZAPP_CONSOLE=1`.
+- **Smarter Smart check** — more YouTube/Discord endpoints (www, image CDN, soft STUN/UDP), soft score in ranking, Fast stops on a strong pass, expandable critical/soft host details and short analysis.
+- **Report a bug** on About — clearer copy; GitHub Issue template.
 
 ### Changed
 
@@ -53,10 +48,10 @@ SHA256:
 
 ```
 zapp_0.2.6_x64-setup.exe
-F8148908B3D1CDBD5B68BBE0C6A42D3E97D94A3DC2C704574DA9802F7F3486C8
+6281DF8FD003012886E12D84D72C9025BBB6C21DE8A2F987B91A48F87E014927
 
 zapp_0.2.6_x64_en-US.msi
-2ED66EC7B536FD724F053B009432A742F342F9AE641F93E445D517F5CF007183
+29C13FF242C12C594DB1C7F4B2DBD6D0D87E261BE424BBD3A230F71969F1F413
 ```
 
 ### Verify

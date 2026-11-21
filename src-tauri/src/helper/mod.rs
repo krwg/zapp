@@ -17,10 +17,10 @@ use std::path::PathBuf;
 
 use interprocess::local_socket::{GenericNamespaced, Name, ToNsName};
 
-/// Legacy TCP port (removed in 1c — named pipe only). Kept for docs/migration notes.
+
 #[allow(dead_code)]
 pub const HELPER_PORT: u16 = 39221;
-/// Namespaced local socket / Windows named pipe: `\\.\pipe\zapp-helper`.
+
 pub const HELPER_PIPE: &str = "zapp-helper";
 pub const HELPER_FLAG: &str = "--helper";
 

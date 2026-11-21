@@ -6,10 +6,10 @@ use serde::Serialize;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
-    /// Plain user-facing message (also used as log text).
+
     #[error("{0}")]
     Message(String),
-    /// Toast/UI see `user`; history / logs / bug report get `log`.
+
     #[error("{user}")]
     Detailed { user: String, log: String },
 }

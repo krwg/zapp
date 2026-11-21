@@ -65,7 +65,7 @@ fn expand_vars(raw: &str, root: &Path) -> String {
     let (gf, gf_tcp, gf_udp) = game_filter_vars(root);
 
     let mut s = raw.to_string();
-    
+
     s = s.replace("^!", "!");
     s = s.replace("%GameFilterTCP%", &gf_tcp);
     s = s.replace("%GameFilterUDP%", &gf_udp);
@@ -132,7 +132,7 @@ pub fn parse_strategy_bat(root: &Path, strategy_name: &str) -> AppResult<Strateg
         let lower = line.to_ascii_lowercase();
         if let Some(idx) = lower.find("winws.exe") {
             let after = &line[idx + "winws.exe".len()..];
-            
+
             let after = after.strip_prefix('"').unwrap_or(after);
             capture.push_str(after);
             capture.push(' ');
@@ -172,7 +172,7 @@ pub fn parse_strategy_bat(root: &Path, strategy_name: &str) -> AppResult<Strateg
 fn dunce_canonicalize(path: &Path) -> PathBuf {
     path.canonicalize()
         .map(|p| {
-            
+
             let s = p.to_string_lossy();
             if let Some(stripped) = s.strip_prefix(r"\\?\") {
                 PathBuf::from(stripped)

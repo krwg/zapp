@@ -2,6 +2,43 @@
  * ║        pages/Overview/OverviewPage.module        ║
  * ╚════════════════════════════════════════════════════╝ */
 
+.notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xl);
+}
+
+.noticeCopy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.noticeTitle {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.02em;
+}
+
+.noticeBody {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.voiceHonesty {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
 .modeCard {
   background: var(--bg-surface);
   border: 1px solid var(--border-default);

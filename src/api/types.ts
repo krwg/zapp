@@ -5,6 +5,7 @@
 import type {
   AppSettings,
   AppSnapshot,
+  ConflictInfo,
   DiagnosticRun,
   EngineStatus,
   MonitoredService,
@@ -36,4 +37,7 @@ export interface ZappApi {
   getRecentErrors(): Promise<string[]>
   getBugReportBundle(): Promise<BugReportBundle>
   importEnginePack(): Promise<UpdateChannel>
+  applyWorkingMode(strategyName: string): Promise<Profile>
+  resolveConflicts(killForeignWinws?: boolean): Promise<ConflictInfo>
+  getConflicts(): Promise<ConflictInfo | null>
 }

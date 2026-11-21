@@ -133,6 +133,8 @@ pub struct SystemInfo {
     pub last_update_check_at: Option<String>,
     pub auto_update_enabled: bool,
     pub elevated: bool,
+
+    pub engine_installed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -162,7 +164,7 @@ pub struct DiagnosticStrategyResult {
     pub name: String,
     pub strategy_type: String,
     pub success: bool,
-    /// Best (min) critical latency — shown as Response in the collapsed UI.
+
     pub latency_ms: Option<u32>,
     pub latency_median_ms: Option<u32>,
     pub latency_max_ms: Option<u32>,
@@ -172,6 +174,34 @@ pub struct DiagnosticStrategyResult {
     pub hosts: Vec<DiagnosticHostDetail>,
     pub notes: String,
     pub tested_at: String,
+    #[serde(default)]
+    pub path_verdict: Option<PathVerdict>,
+}
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PathVerdict {
+    pub youtube: AvailabilityStatus,
+    pub discord_web: AvailabilityStatus,
+    pub discord_voice: AvailabilityStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkingModeEntry {
+    pub strategy_name: String,
+    pub score: u32,
+    pub soft_score: u32,
+    pub network_key: Option<String>,
+    pub tested_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictInfo {
+    pub images: Vec<String>,
+    pub detail: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,6 +218,9 @@ pub struct DiagnosticRun {
     pub finished_at: Option<String>,
     pub results: Vec<DiagnosticStrategyResult>,
     pub is_demo: bool,
+
+    #[serde(default)]
+    pub path_verdict: Option<PathVerdict>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -216,9 +249,9 @@ pub struct UpdateChannel {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum DiagnosticsMode {
-    /// Stop at the first strategy that passes YouTube + Discord.
+
     Fast,
-    /// Rank strategies; keep searching for a stronger score.
+
     Thorough,
 }
 
@@ -228,13 +261,13 @@ pub struct AppSettings {
     pub appearance: ThemeMode,
     pub start_with_system: bool,
     pub minimize_to_tray: bool,
-    /// After Windows logon (app autostart), re-enable bypass if it was on.
+
     #[serde(default = "default_true")]
     pub restore_bypass_on_login: bool,
-    /// After sleep/hibernate, re-enable bypass if it was on.
+
     #[serde(default = "default_true")]
     pub restore_bypass_on_resume: bool,
-    /// When default gateway / Wi‑Fi SSID changes, try to keep bypass up.
+
     #[serde(default = "default_true")]
     pub restore_bypass_on_network_change: bool,
     pub auto_check_updates: bool,
@@ -242,6 +275,22 @@ pub struct AppSettings {
     pub auto_diagnostics: bool,
     pub diagnostics_interval_hours: u32,
     pub diagnostics_mode: DiagnosticsMode,
+
+    #[serde(default = "default_watchdog_minutes")]
+    pub watchdog_interval_minutes: u32,
+    #[serde(default = "default_true")]
+    pub watchdog_enabled: bool,
+
+    #[serde(default)]
+    pub watchdog_auto_recheck: bool,
+
+    #[serde(default = "default_true")]
+    pub reapply_working_mode_on_network_change: bool,
+    #[serde(default)]
+    pub wizard_completed: bool,
+
+    #[serde(default = "default_ui_locale")]
+    pub ui_locale: String,
     pub network_timeout_ms: u32,
     pub network_retries: u32,
     pub advanced_logging: bool,
@@ -249,8 +298,16 @@ pub struct AppSettings {
     pub strategies_path: Option<String>,
 }
 
+fn default_watchdog_minutes() -> u32 {
+    5
+}
+
 fn default_true() -> bool {
     true
+}
+
+fn default_ui_locale() -> String {
+    "en".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -276,6 +333,10 @@ pub struct AppSnapshot {
     pub updates: Vec<UpdateChannel>,
     pub settings: AppSettings,
     pub about: AppAbout,
+    #[serde(default)]
+    pub working_modes: Vec<WorkingModeEntry>,
+    #[serde(default)]
+    pub conflicts: Option<ConflictInfo>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -292,6 +353,12 @@ pub struct SettingsPatch {
     pub auto_diagnostics: Option<bool>,
     pub diagnostics_interval_hours: Option<u32>,
     pub diagnostics_mode: Option<DiagnosticsMode>,
+    pub watchdog_interval_minutes: Option<u32>,
+    pub watchdog_enabled: Option<bool>,
+    pub watchdog_auto_recheck: Option<bool>,
+    pub reapply_working_mode_on_network_change: Option<bool>,
+    pub wizard_completed: Option<bool>,
+    pub ui_locale: Option<String>,
     pub network_timeout_ms: Option<u32>,
     pub network_retries: Option<u32>,
     pub advanced_logging: Option<bool>,

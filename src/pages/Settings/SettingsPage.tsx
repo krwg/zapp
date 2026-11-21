@@ -62,6 +62,7 @@ export function SettingsPage() {
   const changeLocale = (next: Locale) => {
     if (next === locale) return
     setLocale(next)
+    void updateSettings({ uiLocale: next }, { quiet: true })
     const langName = next === 'ru' ? 'Русский' : 'English'
     push({
       title: translate(next, 'toast.languageChangedTitle'),
@@ -232,6 +233,56 @@ export function SettingsPage() {
               checked={settings.autoInstallUpdates}
               disabled={disabled}
               onChange={(checked) => void updateSettings({ autoInstallUpdates: checked })}
+            />
+          </SettingsRow>
+        </SettingsGroup>
+
+        <SettingsGroup>
+          <SettingsRow
+            title={t('settings.watchdogEnabled')}
+            hint={t('settings.watchdogEnabledHint')}
+          >
+            <Toggle
+              checked={settings.watchdogEnabled}
+              disabled={disabled}
+              onChange={(checked) => void updateSettings({ watchdogEnabled: checked })}
+            />
+          </SettingsRow>
+          <SettingsRow title={t('settings.watchdogInterval')} hint={t('settings.watchdogDesc')}>
+            <input
+              className={settingsStyles.input}
+              type="number"
+              min={1}
+              max={120}
+              step={1}
+              value={settings.watchdogIntervalMinutes}
+              disabled={disabled || !settings.watchdogEnabled}
+              onChange={(e) => {
+                const v = Math.max(1, Number(e.target.value) || 5)
+                debouncePatch({ watchdogIntervalMinutes: v })
+              }}
+            />
+          </SettingsRow>
+          <SettingsRow
+            title={t('settings.watchdogAutoRecheck')}
+            hint={t('settings.watchdogAutoRecheckHint')}
+          >
+            <Toggle
+              checked={settings.watchdogAutoRecheck}
+              disabled={disabled || !settings.watchdogEnabled}
+              onChange={(checked) => void updateSettings({ watchdogAutoRecheck: checked })}
+            />
+          </SettingsRow>
+          <SettingsRow
+            title={t('settings.reapplyWorkingModes')}
+            hint={t('settings.reapplyWorkingModesHint')}
+          >
+            <Toggle
+              checked={settings.reapplyWorkingModeOnNetworkChange}
+              disabled={disabled}
+              onChange={(checked) =>
+                void updateSettings({ reapplyWorkingModeOnNetworkChange: checked })
+              }
             />
           </SettingsRow>
         </SettingsGroup>

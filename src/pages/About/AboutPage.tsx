@@ -22,7 +22,7 @@ import styles from './AboutPage.module.css'
 
 const AUTHOR_URL = 'https://krwg.github.io/krwg/'
 const YEAR = 2026
-/** Keep under common browser / GitHub URL length limits. */
+
 const MAX_ISSUE_BODY = 6500
 
 export function AboutPage() {
@@ -71,7 +71,7 @@ export function AboutPage() {
       setBundle(await getBugReportBundle())
     } catch (err) {
       console.warn('getBugReportBundle failed', err)
-      // Fallback so the dialog is never empty if ACL/IPC glitches.
+      
       setBundle({
         appVersion: snapshot?.system.appVersion ?? '?',
         engineVersion: snapshot?.system.engineVersion ?? '?',
@@ -92,8 +92,8 @@ export function AboutPage() {
     if (!state?.openBugReport) return
     void openReport(state.bugPrefill)
     navigate('.', { replace: true, state: {} })
-    // intentionally only when landing with openBugReport
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    
+    
   }, [location.key])
 
   if (!snapshot) return null
@@ -361,3 +361,4 @@ export function AboutPage() {
     </div>
   )
 }
+

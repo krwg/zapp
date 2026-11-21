@@ -4,7 +4,7 @@
 
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::model::*;
 use crate::state::AppState;
 
@@ -54,7 +54,7 @@ pub fn set_engine_running(
             Ok(status)
         }
         Err(e) => {
-            // Toast/UI serialize user text; history keeps the technical log line for bug reports.
+
             state.history.push("error", e.log_message().to_string());
             Err(e)
         }
@@ -108,8 +108,8 @@ pub fn check_updates(state: State<'_, AppState>) -> AppResult<Vec<UpdateChannel>
     state.check_updates()
 }
 
-/// Starts the channel update on a background thread and returns immediately while
-/// status is Downloading / Installing (UI polls `get_updates`).
+
+
 #[tauri::command]
 pub fn update_channel(
     app: AppHandle,
@@ -130,7 +130,7 @@ pub fn update_channel(
         return Ok(current);
     }
 
-    // Mark Downloading synchronously so the first UI poll sees progress.
+
     state.updates.mark_downloading(channel_id.clone())?;
 
     let handle = app.clone();
@@ -139,7 +139,7 @@ pub fn update_channel(
         let Some(state) = handle.try_state::<AppState>() else {
             return;
         };
-        match state.update_channel(id_for_worker.clone()) {
+        match state.update_channel(id_for_worker.clone(), Some(&handle)) {
             Ok((_channel, restart)) => {
                 if restart {
                     state.history.push(
@@ -251,13 +251,34 @@ pub struct BugReportBundle {
     pub bypass_desired: bool,
     pub active_strategy: Option<String>,
     pub recent_errors: Vec<String>,
-    /// Newest-first history lines for GitHub (kind + message).
+
     pub recent_log: Vec<String>,
 }
 
 #[tauri::command]
 pub fn get_bug_report_bundle(state: State<'_, AppState>) -> BugReportBundle {
     bug_report_bundle(state)
+}
+
+#[tauri::command]
+pub fn apply_working_mode(
+    state: State<'_, AppState>,
+    strategy_name: String,
+) -> Result<crate::model::Profile, AppError> {
+    state.apply_working_mode(&strategy_name)
+}
+
+#[tauri::command]
+pub fn resolve_conflicts(
+    state: State<'_, AppState>,
+    kill_foreign_winws: bool,
+) -> crate::model::ConflictInfo {
+    state.resolve_conflicts(kill_foreign_winws)
+}
+
+#[tauri::command]
+pub fn get_conflicts(state: State<'_, AppState>) -> Option<crate::model::ConflictInfo> {
+    state.snapshot().conflicts
 }
 
 fn bug_report_bundle(state: State<'_, AppState>) -> BugReportBundle {

@@ -21,6 +21,9 @@ use crate::engine::managed::EngineLayout;
 use crate::error::{AppError, AppResult};
 use crate::model::{UpdateChannel, UpdateChannelId, UpdateChannelStatus};
 use crate::util::now_iso;
+use tauri::AppHandle;
+#[cfg(desktop)]
+use tauri_plugin_updater::UpdaterExt;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -28,7 +31,7 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 pub struct UpdateOutcome {
     pub channel: UpdateChannel,
     pub layout: Option<EngineLayout>,
-    /// Application installer launched — UI should quit so files can be replaced.
+
     pub restart_required: bool,
 }
 
@@ -87,10 +90,28 @@ impl UpdateManager {
                     Ok(rel) => {
                         let latest = rel.version().to_string();
                         channel.latest_version = latest.clone();
-                        channel.release_notes = rel
+                        let mut notes = rel
                             .body
                             .clone()
                             .unwrap_or_else(|| format!("Release {latest} from {ZAPP_REPO}"));
+                        match probe_signed_updater_manifest() {
+                            Ok(Some(manifest_ver)) => {
+                                notes.push_str(&format!(
+                                    "\n\nSigned updater manifest: latest.json present (v{manifest_ver})."
+                                ));
+                            }
+                            Ok(None) => {
+                                notes.push_str(
+                                    "\n\nSigned updater: latest.json not published yet — install uses GitHub asset + SHA256.",
+                                );
+                            }
+                            Err(e) => {
+                                notes.push_str(&format!(
+                                    "\n\nSigned updater probe failed ({e}) — install falls back to GitHub asset + SHA256."
+                                ));
+                            }
+                        }
+                        channel.release_notes = notes;
                         channel.status =
                             if compare_semver(&latest, &channel.current_version).is_gt() {
                                 UpdateChannelStatus::Available
@@ -112,12 +133,16 @@ impl UpdateManager {
         Ok(channels.clone())
     }
 
-    pub fn update_channel(&self, id: UpdateChannelId) -> AppResult<UpdateOutcome> {
+    pub fn update_channel(
+        &self,
+        id: UpdateChannelId,
+        app: Option<&AppHandle>,
+    ) -> AppResult<UpdateOutcome> {
         match id {
             UpdateChannelId::Engine | UpdateChannelId::Strategies => {
                 self.update_flowseal_pack(id)
             }
-            UpdateChannelId::Application => self.update_application(),
+            UpdateChannelId::Application => self.update_application(app),
         }
     }
 
@@ -144,7 +169,7 @@ impl UpdateManager {
         }
     }
 
-    /// First-run / repair: download Flowseal pack even if channel looks up-to-date.
+
     pub fn ensure_engine_installed(
         &self,
         current: &EngineLayout,
@@ -176,8 +201,8 @@ impl UpdateManager {
         Ok(outcome.layout)
     }
 
-    /// Install every Available channel. Engine pack once; Application last.
-    pub fn auto_install_available(&self) -> AppResult<Vec<UpdateOutcome>> {
+
+    pub fn auto_install_available(&self, app: Option<&AppHandle>) -> AppResult<Vec<UpdateOutcome>> {
         let pending: Vec<UpdateChannelId> = self
             .list()
             .into_iter()
@@ -194,11 +219,11 @@ impl UpdateManager {
                     if engine_done {
                         continue;
                     }
-                    outcomes.push(self.update_channel(UpdateChannelId::Engine)?);
+                    outcomes.push(self.update_channel(UpdateChannelId::Engine, None)?);
                     engine_done = true;
                 }
                 UpdateChannelId::Application => {
-                    outcomes.push(self.update_channel(UpdateChannelId::Application)?);
+                    outcomes.push(self.update_channel(UpdateChannelId::Application, app)?);
                 }
             }
         }
@@ -246,7 +271,7 @@ impl UpdateManager {
         self.install_flowseal_zip(&archive_path, Some(version), id)
     }
 
-    /// Offline / mirror import: install a Flowseal-style zip from disk (file picker or path).
+
     pub fn import_engine_zip(&self, archive: &Path) -> AppResult<UpdateOutcome> {
         {
             let mut channels = self.channels.lock().expect("updates lock");
@@ -337,7 +362,7 @@ impl UpdateManager {
                 dest
             }
         };
-        // Roadmap hygiene: keep current + previous (N-1), drop older version dirs.
+
         if let Some(parent) = layout_root.parent() {
             crate::engine::pack::cleanup_old_engine_packs(parent, 2);
         }
@@ -373,7 +398,7 @@ impl UpdateManager {
         })
     }
 
-    fn update_application(&self) -> AppResult<UpdateOutcome> {
+    fn update_application(&self, app: Option<&AppHandle>) -> AppResult<UpdateOutcome> {
         {
             let mut channels = self.channels.lock().expect("updates lock");
             let channel = channels
@@ -389,6 +414,15 @@ impl UpdateManager {
             }
             channel.status = UpdateChannelStatus::Downloading;
             channel.download_progress = Some(0);
+        }
+
+
+        if let Some(handle) = app {
+            match try_plugin_app_update(handle, self) {
+                Ok(Some(outcome)) => return Ok(outcome),
+                Ok(None) => log::info!("plugin updater: no signed update — falling back to GitHub installer"),
+                Err(e) => log::warn!("plugin updater failed, falling back: {e}"),
+            }
         }
 
         let release = fetch_zapp_latest()?;
@@ -460,7 +494,7 @@ impl UpdateManager {
             .iter_mut()
             .find(|c| c.id == UpdateChannelId::Application)
             .ok_or_else(|| AppError::from("Update channel not found"))?;
-        // Version flips after installer finishes; keep latest as target until restart.
+
         channel.latest_version = version.clone();
         channel.release_notes = format!(
             "Installer launched ({}). Confirm UAC / finish setup, then reopen zapp.",
@@ -498,7 +532,7 @@ fn link_engine_current_near(root: &Path) -> AppResult<()> {
             .status()
             .map_err(|e| AppError::from(e.to_string()))?;
         if !status.success() {
-            // Fallback: copy tree when junction fails (no admin).
+
             copy_dir_recursive(root, &current)?;
         }
     }
@@ -524,8 +558,8 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> AppResult<()> {
     Ok(())
 }
 
-/// Ask Windows for administrator rights. `Command::spawn` cannot do this and
-/// returns os error 740 for an installer marked requireAdministrator.
+
+
 #[cfg(windows)]
 fn launch_elevated(file: &Path, args: &[String]) -> AppResult<()> {
     let params = args
@@ -607,8 +641,8 @@ fn launch_app_installer(path: &Path) -> AppResult<()> {
                 .parent()
                 .unwrap_or(Path::new("."))
                 .join("apply-zapp-update.cmd");
-            // Wait for this process to exit, stop winws (locks binaries), then copy.
-            // Do not taskkill zapp.exe from inside the app — the updater waits for exit.
+
+
             let body = format!(
                 "@echo off\r\n\
                  setlocal\r\n\
@@ -647,6 +681,158 @@ fn launch_app_installer(path: &Path) -> AppResult<()> {
     Err(AppError::from(format!(
         "Unsupported application asset: {name}"
     )))
+}
+
+
+fn probe_signed_updater_manifest() -> AppResult<Option<String>> {
+    let url = "https://github.com/krwg/zapp/releases/latest/download/latest.json";
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("zapp/0.2 (+https://github.com/krwg/zapp)")
+        .timeout(Duration::from_secs(12))
+        .build()
+        .map_err(|e| AppError::from(e.to_string()))?;
+    let res = client
+        .get(url)
+        .send()
+        .map_err(|e| AppError::from(e.to_string()))?;
+    if res.status().as_u16() == 404 {
+        return Ok(None);
+    }
+    if !res.status().is_success() {
+        return Err(AppError::from(format!(
+            "latest.json HTTP {}",
+            res.status()
+        )));
+    }
+    let body: serde_json::Value = res.json().map_err(|e| AppError::from(e.to_string()))?;
+    let version = body
+        .get("version")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .trim_start_matches('v')
+        .to_string();
+    if version.is_empty() {
+        return Ok(None);
+    }
+    let platforms = body.get("platforms").and_then(|p| p.as_object());
+    let win = platforms.and_then(|p| p.get("windows-x86_64"));
+    let has_sig = win
+        .and_then(|w| w.get("signature"))
+        .and_then(|s| s.as_str())
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
+    let has_url = win
+        .and_then(|w| w.get("url"))
+        .and_then(|s| s.as_str())
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
+    if has_sig && has_url {
+        Ok(Some(version))
+    } else {
+        Ok(None)
+    }
+}
+
+
+#[cfg(desktop)]
+fn try_plugin_app_update(
+    app: &AppHandle,
+    manager: &UpdateManager,
+) -> AppResult<Option<UpdateOutcome>> {
+    let result = tauri::async_runtime::block_on(async {
+        let updater = app
+            .updater_builder()
+            .build()
+            .map_err(|e| AppError::from(format!("updater build: {e}")))?;
+        match updater.check().await {
+            Ok(Some(update)) => {
+                {
+                    let mut channels = manager.channels.lock().expect("updates lock");
+                    if let Some(channel) = channels
+                        .iter_mut()
+                        .find(|c| c.id == UpdateChannelId::Application)
+                    {
+                        channel.status = UpdateChannelStatus::Downloading;
+                        channel.latest_version = update.version.clone();
+                        if let Some(notes) = update.body.clone() {
+                            channel.release_notes = notes;
+                        }
+                    }
+                }
+                update
+                    .download_and_install(
+                        |chunk, total| {
+                            let pct = total
+                                .filter(|t| *t > 0)
+                                .map(|t| ((chunk as f64 / t as f64) * 100.0) as u8)
+                                .unwrap_or(0);
+                            let mut channels = manager.channels.lock().expect("updates lock");
+                            if let Some(channel) = channels
+                                .iter_mut()
+                                .find(|c| c.id == UpdateChannelId::Application)
+                            {
+                                channel.download_progress = Some(u32::from(pct.min(99)));
+                                channel.status = UpdateChannelStatus::Downloading;
+                            }
+                        },
+                        || {
+                            let mut channels = manager.channels.lock().expect("updates lock");
+                            if let Some(channel) = channels
+                                .iter_mut()
+                                .find(|c| c.id == UpdateChannelId::Application)
+                            {
+                                channel.status = UpdateChannelStatus::Installing;
+                                channel.download_progress = Some(100);
+                            }
+                        },
+                    )
+                    .await
+                    .map_err(|e| AppError::from(format!("updater install: {e}")))?;
+
+                let mut channels = manager.channels.lock().expect("updates lock");
+                let channel = channels
+                    .iter_mut()
+                    .find(|c| c.id == UpdateChannelId::Application)
+                    .ok_or_else(|| AppError::from("Update channel not found"))?;
+                channel.download_progress = None;
+                channel.last_checked_at = Some(now_iso());
+                channel.status = UpdateChannelStatus::Available;
+                channel.release_notes = format!(
+                    "Signed updater applied ({}). zapp will restart.",
+                    channel.latest_version
+                );
+                Ok(Some(UpdateOutcome {
+                    channel: channel.clone(),
+                    layout: None,
+                    restart_required: true,
+                }))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => {
+                let msg = e.to_string();
+
+                if msg.contains("404")
+                    || msg.contains("Not Found")
+                    || msg.contains("error sending request")
+                    || msg.contains("timed out")
+                {
+                    log::info!("plugin updater unavailable: {msg}");
+                    return Ok(None);
+                }
+                Err(AppError::from(format!("updater check: {msg}")))
+            }
+        }
+    })?;
+    Ok(result)
+}
+
+#[cfg(not(desktop))]
+fn try_plugin_app_update(
+    _app: &AppHandle,
+    _manager: &UpdateManager,
+) -> AppResult<Option<UpdateOutcome>> {
+    Ok(None)
 }
 
 fn find_file(root: &Path, name: &str) -> Option<PathBuf> {
@@ -774,7 +960,7 @@ fn normalize_extracted_pack(dest: &Path) -> AppResult<PathBuf> {
     ))
 }
 
-/// Move `engine/1.10.4/zapret-discord-youtube-1.10.4/*` → `engine/1.10.4/*`.
+
 fn flatten_pack_to_version_dir(dest: &Path, nested: &Path) -> AppResult<PathBuf> {
     if nested == dest {
         return Ok(dest.to_path_buf());

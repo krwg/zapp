@@ -11,6 +11,11 @@ use std::time::{Duration, Instant};
 use std::os::windows::process::CommandExt;
 
 use interprocess::local_socket::{prelude::*, ListenerOptions};
+#[cfg(windows)]
+use interprocess::os::windows::{
+    local_socket::ListenerOptionsExt,
+    security_descriptor::SecurityDescriptor,
+};
 
 use crate::engine::kill_orphan_winws;
 
@@ -21,6 +26,19 @@ use super::paths::{
 use super::protocol::{HelperRequest, HelperResponse, HelperStatus};
 use super::{helper_pipe_name, helper_state_dir, token_path, HELPER_PIPE};
 use std::path::{Path, PathBuf};
+
+
+
+#[cfg(windows)]
+fn helper_pipe_security() -> Result<SecurityDescriptor, String> {
+
+
+    let sddl = "D:(A;;GA;;;AU)(A;;GA;;;SY)(A;;GA;;;BA)S:(ML;;NW;;;ME)";
+    let wide = widestring::U16CString::from_str(sddl)
+        .map_err(|e| format!("helper pipe SDDL encode: {e}"))?;
+    SecurityDescriptor::deserialize(wide.as_ucstr())
+        .map_err(|e| format!("helper pipe security descriptor: {e}"))
+}
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -37,6 +55,20 @@ pub fn serve() -> Result<(), String> {
     let token = read_token()?;
 
     let name = helper_pipe_name()?;
+    #[cfg(windows)]
+    let listener = {
+        let sd = helper_pipe_security()?;
+        ListenerOptions::new()
+            .name(name)
+            .security_descriptor(sd)
+            .create_sync()
+            .map_err(|e| {
+                format!(
+                    "bind helper pipe '{HELPER_PIPE}': {e} (another helper may still be running)"
+                )
+            })?
+    };
+    #[cfg(not(windows))]
     let listener = ListenerOptions::new()
         .name(name)
         .create_sync()
@@ -130,7 +162,7 @@ fn handle(runtime: &Mutex<Runtime>, req: HelperRequest) -> HelperResponse {
             ..
         } => {
             let t0 = Instant::now();
-            // Own the Child — stop previous via kill/wait, no taskkill on hot path.
+
             stop_child(&mut rt);
 
             match spawn_winws(&winws, &work_dir, &args, &strategy) {

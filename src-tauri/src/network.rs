@@ -10,7 +10,7 @@ use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-/// Coarse network identity: default IPv4 gateway (+ optional WLAN SSID).
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NetworkFingerprint {
     pub gateway: Option<String>,
@@ -45,7 +45,7 @@ fn default_gateway_v4() -> Option<String> {
         cmd.creation_flags(CREATE_NO_WINDOW);
         let out = cmd.output().ok()?;
         let text = String::from_utf8_lossy(&out.stdout);
-        // Active routes: look for 0.0.0.0 destination; gateway is 3rd column.
+
         for line in text.lines() {
             let cols: Vec<&str> = line.split_whitespace().collect();
             if cols.len() >= 3 && cols[0] == "0.0.0.0" {
@@ -76,7 +76,7 @@ fn wlan_ssid() -> Option<String> {
         let text = String::from_utf8_lossy(&out.stdout);
         for line in text.lines() {
             let trimmed = line.trim();
-            // "SSID                   : MyWifi" — skip BSSID.
+
             if trimmed.starts_with("SSID") && !trimmed.starts_with("BSSID") {
                 if let Some(rest) = trimmed.split_once(':') {
                     let ssid = rest.1.trim();

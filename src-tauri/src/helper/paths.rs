@@ -4,9 +4,9 @@
 
 use std::path::{Component, Path, PathBuf};
 
-/// Per-user managed packs: `%APPDATA%\<id>\engine\<ver>\bin\winws.exe`.
+
 pub const APP_DATA_ID: &str = "app.zapp.desktop";
-/// Machine-wide packs (1b): `%ProgramData%\zapp\engine\<ver>\…`.
+
 pub const PROGRAM_DATA_ID: &str = "zapp";
 
 pub fn managed_engine_prefix() -> PathBuf {
@@ -27,12 +27,12 @@ pub fn program_data_engine_prefix() -> PathBuf {
     base.join(PROGRAM_DATA_ID).join("engine")
 }
 
-/// Allowed engine roots: ProgramData first, then AppData (legacy / fallback).
+
 pub fn managed_engine_prefixes() -> Vec<PathBuf> {
     vec![program_data_engine_prefix(), managed_engine_prefix()]
 }
 
-/// Validate against any managed prefix (ProgramData or AppData).
+
 pub fn validate_winws_paths_any(
     winws: &Path,
     work_dir: &Path,
@@ -47,17 +47,17 @@ pub fn validate_winws_paths_any(
     Err(last)
 }
 
-/// Ensure `winws` / `work_dir` point at the managed pack layout only.
-///
-/// Rules (after canonicalize when paths exist):
-/// - file name is `winws.exe`
-/// - parent dir is `bin`
-/// - `work_dir` is either that `bin` dir (Flowseal cwd) or the pack root (parent of `bin`)
-/// - pack root is a direct child of `allowed_engine_prefix` (…\engine\<ver>)
-/// - no `..` components in the unresolved inputs
-///
-/// Returns `(winws_abs, cwd_abs)` where `cwd_abs` is the directory to use as process cwd
-/// (prefers `bin` when the caller passed pack root).
+
+
+
+
+
+
+
+
+
+
+
 pub fn validate_winws_paths(
     winws: &Path,
     work_dir: &Path,
@@ -98,7 +98,7 @@ pub fn validate_winws_paths(
         .parent()
         .ok_or_else(|| "refused: engine root missing".to_string())?;
 
-    // Strategy launcher uses `…\engine\<ver>\bin` as cwd; allow pack root too.
+
     let cwd_abs = if path_eq(&work_abs, bin_dir) {
         bin_dir.to_path_buf()
     } else if path_eq(&work_abs, engine_root) {
@@ -123,7 +123,7 @@ pub fn validate_winws_paths(
         ));
     }
 
-    // Version segment must be a single normal component (no empty / `.` / `..`).
+
     let ver = engine_root
         .file_name()
         .and_then(|s| s.to_str())
@@ -135,7 +135,7 @@ pub fn validate_winws_paths(
     Ok((winws_abs, cwd_abs))
 }
 
-/// AppData root for this product (`%APPDATA%\app.zapp.desktop`).
+
 pub fn managed_app_data_root() -> PathBuf {
     managed_engine_prefix()
         .parent()
@@ -143,7 +143,7 @@ pub fn managed_app_data_root() -> PathBuf {
         .unwrap_or_else(managed_engine_prefix)
 }
 
-/// `%ProgramData%\zapp` (parent of `engine`).
+
 pub fn program_data_zapp_root() -> PathBuf {
     program_data_engine_prefix()
         .parent()
@@ -151,8 +151,8 @@ pub fn program_data_zapp_root() -> PathBuf {
         .unwrap_or_else(program_data_engine_prefix)
 }
 
-/// Restrictive ACL on `%ProgramData%\zapp` (SYSTEM+Admins full, Users RX).
-/// Elevated helper should call this after creating the tree.
+
+
 pub fn apply_program_data_acl(zapp_root: &Path) -> Result<(), String> {
     #[cfg(windows)]
     {
@@ -201,7 +201,7 @@ fn canonicalize_or_lex(path: &Path) -> Result<PathBuf, String> {
     match path.canonicalize() {
         Ok(p) => Ok(p),
         Err(_) => {
-            // Prefix may not exist yet during unit tests; normalize lexically.
+
             Ok(normalize_lexically(path))
         }
     }
@@ -225,7 +225,7 @@ fn path_eq(a: &Path, b: &Path) -> bool {
     if a == b {
         return true;
     }
-    // Windows: compare case-insensitive string forms after canonicalize.
+
     let a = a.to_string_lossy();
     let b = b.to_string_lossy();
     a.eq_ignore_ascii_case(&b)
@@ -255,12 +255,12 @@ mod tests {
         let winws = bin.join("winws.exe");
         fs::write(&winws, b"fake").unwrap();
 
-        // Flowseal strategy cwd is `bin`.
+
         let (w, d) = validate_winws_paths(&winws, &bin, &prefix).unwrap();
         assert!(w.ends_with("winws.exe"));
         assert!(path_eq(&d, &bin.canonicalize().unwrap()));
 
-        // Pack root is also accepted; cwd normalized to bin.
+
         let (w2, d2) = validate_winws_paths(&winws, &pack, &prefix).unwrap();
         assert!(w2.ends_with("winws.exe"));
         assert!(path_eq(&d2, &bin.canonicalize().unwrap()));

@@ -6,6 +6,7 @@ import { invoke } from '@tauri-apps/api/core'
 import type {
   AppSettings,
   AppSnapshot,
+  ConflictInfo,
   DiagnosticRun,
   EngineStatus,
   MonitoredService,
@@ -43,6 +44,11 @@ export function createTauriApi(): ZappApi {
     getBugReportBundle: () => invoke<BugReportBundle>('get_bug_report_bundle'),
     importEnginePack: () =>
       invoke<UpdateChannel>('import_engine_pack'),
+    applyWorkingMode: (strategyName) =>
+      invoke<Profile>('apply_working_mode', { strategyName }),
+    resolveConflicts: (killForeignWinws = true) =>
+      invoke<ConflictInfo>('resolve_conflicts', { killForeignWinws }),
+    getConflicts: () => invoke<ConflictInfo | null>('get_conflicts'),
   }
 }
 

@@ -25,7 +25,7 @@ fn resolve_engine_layout_inner(app_data: &Path) -> EngineLayout {
         }
     }
 
-    // Prefer machine-wide ProgramData packs (1b), then per-user AppData.
+
     let program_data = crate::helper::paths::program_data_engine_prefix();
     let program_current = program_data.join("current");
     if looks_like_pack(&program_current) {
@@ -56,12 +56,12 @@ fn resolve_engine_layout_inner(app_data: &Path) -> EngineLayout {
 fn project_candidates() -> Vec<PathBuf> {
     let mut out = Vec::new();
 
-    
+
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     out.push(manifest_dir.join("../vendor/zapret"));
     out.push(manifest_dir.join("../../vendor/zapret"));
 
-    
+
     for base in [
         manifest_dir.join(".."),
         manifest_dir.join("../.."),
@@ -98,7 +98,7 @@ fn newest_under(engine_root: PathBuf) -> Option<EngineLayout> {
             packs.push(path);
             continue;
         }
-        // Nested Flowseal zip layout: engine/1.10.4/zapret-discord-youtube-1.10.4/
+
         if let Ok(nested) = fs::read_dir(&path) {
             for child in nested.flatten() {
                 let child_path = child.path();

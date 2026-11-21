@@ -12,7 +12,7 @@ import styles from './DiagnosticProgress.module.css'
 interface DiagnosticProgressProps {
   run: DiagnosticRun
   busy?: boolean
-  /** Separate from start so Cancel stays clickable while a start invoke is in flight. */
+  
   cancelBusy?: boolean
   mode: DiagnosticsMode
   onModeChange: (mode: DiagnosticsMode) => void
@@ -140,3 +140,4 @@ export function DiagnosticProgress({
     </section>
   )
 }
+

@@ -58,7 +58,7 @@ function listItem(line: string): { ordered: boolean; text: string } | null {
   return null
 }
 
-/** GFM table separator: `| --- | :---: | ---: |` */
+
 function isTableSeparator(line: string): boolean {
   const t = line.trim()
   if (!t.includes('-') || !t.includes('|')) return false
@@ -97,7 +97,7 @@ export function Markdown({ source, compact }: MarkdownProps) {
       continue
     }
 
-    // Fenced code block
+    
     if (trimmed.startsWith('```')) {
       const buf: string[] = []
       i += 1
@@ -105,7 +105,7 @@ export function Markdown({ source, compact }: MarkdownProps) {
         buf.push(lines[i])
         i += 1
       }
-      i += 1 // closing fence
+      i += 1 
       nodes.push(
         <pre key={key++} className={styles.codeBlock}>
           <code>{buf.join('\n')}</code>
@@ -291,3 +291,4 @@ export function markdownPreview(source: string, maxLen = 140): string {
   if (plain.length <= maxLen) return plain
   return `${plain.slice(0, maxLen).trim()}…`
 }
+

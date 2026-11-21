@@ -48,7 +48,7 @@ pub fn parse_sha256_digest(digest: &str) -> Option<String> {
     }
 }
 
-/// Resolve expected SHA256 for an application asset from GitHub digest or release body.
+
 pub fn expected_app_sha256(asset: &GithubAsset, body: Option<&str>) -> AppResult<String> {
     if let Some(d) = asset.digest.as_deref().and_then(parse_sha256_digest) {
         return Ok(d);
@@ -78,7 +78,7 @@ pub fn verify_file_sha256(path: &Path, expected_hex: &str) -> AppResult<()> {
     Ok(())
 }
 
-/// Flowseal packs are not signed by us — basic zip sanity only.
+
 pub fn verify_zip_sanity(path: &Path) -> AppResult<()> {
     let meta = std::fs::metadata(path).map_err(|e| AppError::from(e.to_string()))?;
     if meta.len() < MIN_ZIP_BYTES {
@@ -105,7 +105,7 @@ fn sha256_from_release_body(body: &str, asset_name: &str) -> Option<String> {
     for (i, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
         if trimmed.to_ascii_lowercase().contains(&lower_name) {
-            // Next non-empty line may be the hex (RELEASE_*.md style).
+
             for next in lines.iter().skip(i + 1).take(4) {
                 let candidate = next.trim();
                 if candidate.is_empty() || candidate.starts_with('`') && candidate.len() < 8 {
@@ -117,10 +117,10 @@ fn sha256_from_release_body(body: &str, asset_name: &str) -> Option<String> {
                 }
             }
         }
-        // Inline: `file.exe` followed by hex on same/nearby SHA256 section
+
         if let Some(rest) = trimmed.strip_prefix("SHA256:") {
             if let Some(h) = parse_sha256_digest(rest.trim()) {
-                // Only accept if previous lines mention the asset
+
                 let window = lines[i.saturating_sub(6)..=i].join("\n").to_ascii_lowercase();
                 if window.contains(&lower_name) {
                     return Some(h);

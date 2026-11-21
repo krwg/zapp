@@ -97,3 +97,18 @@ commands.allow = ["get_bug_report_bundle"]
 identifier = "allow-import-engine-pack"
 description = "Import a Flowseal engine zip from disk (offline)"
 commands.allow = ["import_engine_pack"]
+
+[[permission]]
+identifier = "allow-apply-working-mode"
+description = "Re-apply a saved working strategy from Smart check history"
+commands.allow = ["apply_working_mode"]
+
+[[permission]]
+identifier = "allow-resolve-conflicts"
+description = "Kill conflicting DPI tools and return remaining conflicts"
+commands.allow = ["resolve_conflicts"]
+
+[[permission]]
+identifier = "allow-get-conflicts"
+description = "List conflicting DPI tools currently running"
+commands.allow = ["get_conflicts"]

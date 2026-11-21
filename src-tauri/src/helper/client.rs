@@ -43,7 +43,7 @@ fn ensure_token(_app_data: &Path) -> Result<String, EngineFault> {
 fn harden_token_acl(path: &Path) {
     #[cfg(windows)]
     {
-        // Restrict helper.token to the current user (+ SYSTEM) via icacls (no PowerShell).
+
         let path_s = path.to_string_lossy();
         let user = std::env::var("USERNAME").unwrap_or_else(|_| "Users".into());
         let grant_user = format!("{user}:(R)");
@@ -75,23 +75,42 @@ fn harden_token_acl(path: &Path) {
     }
 }
 
-fn connect_helper() -> Result<LocalStream, EngineFault> {
+fn connect_helper_within(timeout: Duration) -> Result<LocalStream, EngineFault> {
     let name = helper_pipe_name().map_err(|e| EngineFault::new(FaultCode::Unknown, e))?;
-    let deadline = Instant::now() + Duration::from_secs(3);
+    let deadline = Instant::now() + timeout;
+    let mut last_err = None;
     loop {
         match LocalStream::connect(name.clone()) {
             Ok(s) => return Ok(s),
             Err(e) => {
+                last_err = Some(e);
                 if Instant::now() >= deadline {
-                    return Err(EngineFault::new(
-                        FaultCode::UacLaunchFailed,
-                        format!("helper not reachable: {e}"),
-                    ));
+                    break;
                 }
-                std::thread::sleep(Duration::from_millis(50));
+                std::thread::sleep(Duration::from_millis(40));
             }
         }
     }
+    let msg = last_err
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| "helper not reachable".into());
+    let denied = msg.to_ascii_lowercase().contains("access is denied") || msg.contains("os error 5");
+    let detail = if denied {
+        format!(
+            "helper pipe access denied ({msg}) — elevated helper may be using a locked-down pipe ACL; restart zapp after update"
+        )
+    } else {
+        format!("helper not reachable: {msg}")
+    };
+    Err(EngineFault::new(FaultCode::UacLaunchFailed, detail))
+}
+
+fn connect_helper() -> Result<LocalStream, EngineFault> {
+    connect_helper_within(Duration::from_secs(3))
+}
+
+fn helper_pipe_alive_quick() -> bool {
+    connect_helper_within(Duration::from_millis(120)).is_ok()
 }
 
 fn request_with_timeout(
@@ -139,7 +158,9 @@ fn helper_auth_ok(token: &str) -> Result<bool, EngineFault> {
 fn kill_stale_helper() {
     #[cfg(windows)]
     {
-        // Named-pipe helper: stop only the staged elevated binary, never the UI `zapp.exe`.
+        if !crate::engine::process_running("zapp-helper.exe") {
+            return;
+        }
         let _ = Command::new("taskkill")
             .args(["/F", "/IM", "zapp-helper.exe", "/T"])
             .stdin(Stdio::null())
@@ -147,7 +168,7 @@ fn kill_stale_helper() {
             .stderr(Stdio::null())
             .creation_flags(CREATE_NO_WINDOW)
             .status();
-        std::thread::sleep(Duration::from_millis(250));
+        std::thread::sleep(Duration::from_millis(120));
     }
 }
 
@@ -163,7 +184,7 @@ fn local_exe_mtime_secs() -> Option<u64> {
     )
 }
 
-fn helper_is_current(token: &str) -> bool {
+fn helper_ping_current(token: &str) -> bool {
     let Ok(res) = request_with_timeout(
         &HelperRequest::Ping {
             token: token.to_string(),
@@ -182,13 +203,18 @@ fn helper_is_current(token: &str) -> bool {
     let Some(have_path) = status.exe_path else {
         return false;
     };
-    
-    if !have_path.eq_ignore_ascii_case(&helper_bin.to_string_lossy()) {
+    have_path.eq_ignore_ascii_case(&helper_bin.to_string_lossy())
+}
+
+
+fn helper_is_current(token: &str) -> bool {
+    if !helper_ping_current(token) {
         return false;
     }
-    
+
+
     match (local_exe_mtime_secs(), helper_bin_mtime_secs()) {
-        (Some(ui), Some(helper)) => ui <= helper,
+        (Some(ui), Some(helper)) => ui <= helper + 2,
         _ => true,
     }
 }
@@ -215,25 +241,35 @@ fn request_shutdown(token: &str) {
 }
 
 pub fn ensure_helper(app_data: &Path) -> Result<(), EngineFault> {
+    let t0 = Instant::now();
     let token = ensure_token(app_data)?;
 
-    if helper_is_current(&token) {
+    if helper_pipe_alive_quick() && helper_is_current(&token) {
         return Ok(());
     }
 
-    
-    
-    request_shutdown(&token);
+    // Avoid multi-second connect timeouts when no helper is listening.
+    if helper_pipe_alive_quick() {
+        request_shutdown(&token);
+    }
     kill_stale_helper();
 
     spawn_helper_elevated(app_data)?;
+    log::info!(
+        "timing ensure_helper.uac_shown: {:.0}ms",
+        t0.elapsed().as_secs_f64() * 1000.0
+    );
 
     let deadline = Instant::now() + Duration::from_secs(45);
     while Instant::now() < deadline {
-        if helper_is_current(&token) {
+        if helper_ping_current(&token) {
+            log::info!(
+                "timing ensure_helper.ready: {:.0}ms",
+                t0.elapsed().as_secs_f64() * 1000.0
+            );
             return Ok(());
         }
-        std::thread::sleep(Duration::from_millis(300));
+        std::thread::sleep(Duration::from_millis(200));
     }
 
     Err(EngineFault::new(
@@ -254,13 +290,7 @@ fn spawn_helper_elevated(app_data: &Path) -> Result<(), EngineFault> {
             EngineFault::new(FaultCode::Unknown, format!("helper dir: {e}"))
         })?;
         let helper_bin = helper_exe_path();
-        
-        fs::copy(&src, &helper_bin).map_err(|e| {
-            EngineFault::new(
-                FaultCode::UacLaunchFailed,
-                format!("cannot stage helper binary: {e}"),
-            )
-        })?;
+        stage_helper_binary(&src, &helper_bin)?;
 
         match crate::win32::shell_execute_runas(&helper_bin, HELPER_FLAG, &dir) {
             Ok(()) => Ok(()),
@@ -282,6 +312,63 @@ fn spawn_helper_elevated(app_data: &Path) -> Result<(), EngineFault> {
             "helper elevation is Windows-only",
         ))
     }
+}
+
+fn helper_binary_fresh(src: &Path, helper_bin: &Path) -> bool {
+    let Ok(src_meta) = fs::metadata(src) else {
+        return false;
+    };
+    let Ok(dst_meta) = fs::metadata(helper_bin) else {
+        return false;
+    };
+    if src_meta.len() != dst_meta.len() {
+        return false;
+    }
+    match (src_meta.modified(), dst_meta.modified()) {
+        (Ok(s), Ok(d)) => d >= s,
+        _ => false,
+    }
+}
+
+fn stage_helper_binary(src: &Path, helper_bin: &Path) -> Result<(), EngineFault> {
+    if helper_binary_fresh(src, helper_bin) {
+        log::info!("helper binary already staged — skip copy");
+        return Ok(());
+    }
+
+    let t0 = Instant::now();
+    let tmp = helper_bin.with_extension("exe.staging");
+    let mut last = None;
+    for attempt in 0..8 {
+        if attempt > 0 {
+            kill_stale_helper();
+            std::thread::sleep(Duration::from_millis(120 + attempt * 80));
+        }
+        let _ = fs::remove_file(&tmp);
+        match fs::copy(src, &tmp) {
+            Ok(_) => match fs::rename(&tmp, helper_bin).or_else(|_| {
+                let _ = fs::remove_file(helper_bin);
+                fs::rename(&tmp, helper_bin)
+            }) {
+                Ok(()) => {
+                    log::info!(
+                        "timing stage_helper_binary: {:.0}ms",
+                        t0.elapsed().as_secs_f64() * 1000.0
+                    );
+                    return Ok(());
+                }
+                Err(e) => last = Some(e),
+            },
+            Err(e) => last = Some(e),
+        }
+    }
+    let detail = last
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| "unknown staging error".into());
+    Err(EngineFault::new(
+        FaultCode::UacLaunchFailed,
+        format!("cannot stage helper binary: {detail}"),
+    ))
 }
 
 pub fn helper_ping(app_data: &Path) -> Result<HelperResponse, EngineFault> {
@@ -313,7 +400,7 @@ pub fn helper_start(
 ) -> Result<HelperStatus, EngineFault> {
     ensure_helper(app_data)?;
     let token = ensure_token(app_data)?;
-    
+
     let res = request_with_timeout(
         &HelperRequest::Start {
             token,
@@ -339,7 +426,7 @@ pub fn helper_stop(app_data: &Path) -> Result<(), EngineFault> {
     }
     let token = ensure_token(app_data)?;
     if !helper_auth_ok(&token).unwrap_or(false) {
-        // Helper unreachable — best-effort orphan cleanup only.
+
         crate::engine::kill_orphan_winws();
         return Ok(());
     }
@@ -362,8 +449,8 @@ pub fn helper_reset(app_data: &Path) -> Result<(), EngineFault> {
     }
 }
 
-/// Elevated copy of a staged pack into `%ProgramData%\zapp\engine\<ver>` + ACL.
-/// Returns the installed pack root.
+
+
 pub fn helper_install_engine(
     app_data: &Path,
     version: &str,
@@ -396,7 +483,7 @@ pub fn helper_install_engine(
     Ok(dest)
 }
 
-/// Ask the elevated helper to exit (Quit / update). Best-effort; ignores missing helper.
+
 pub fn helper_shutdown(app_data: &Path) {
     if !token_path().exists() {
         return;
