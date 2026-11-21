@@ -71,7 +71,10 @@ jobs:
             throw "TAURI_SIGNING_PRIVATE_KEY secret is required for release builds (updater .sig)."
           }
           # Enable updater artifacts only in CI (keeps local unsigned builds working).
-          npm run tauri build -- --config '{\"bundle\":{\"createUpdaterArtifacts\":true}}'
+          # Pass JSON via a file — PowerShell mangles inline --config quotes.
+          $cfgPath = Join-Path $env:RUNNER_TEMP 'tauri-updater-artifacts.json'
+          Set-Content -Path $cfgPath -Value '{"bundle":{"createUpdaterArtifacts":true}}' -Encoding utf8NoBOM
+          npm run tauri build -- --config $cfgPath
 
       - name: Collect artifacts
         id: arts
